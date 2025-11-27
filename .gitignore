@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# OAuth Configuration - Contains sensitive Google OAuth credentials
+# DO NOT commit these files - they contain your personal OAuth client_id
+oauth-config.json
+
+# Manifest contains OAuth client_id - keep private, use manifest.json.example as template
+manifest.json
+
+# Chrome Extension build artifacts
+*.crx
+*.pem
+*.zip
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# Build artifacts and logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables (if any)
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~
+
+# Coverage and testing
+coverage/
+*.lcov
+.nyc_output/

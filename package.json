@@ -1,0 +1,12 @@
+{
+  "name": "linkedin-scraper-extension",
+  "version": "1.0.0",
+  "description": "LinkedIn Scraper Chrome Extension",
+  "scripts": {
+    "generate-icons": "node generate-icons.js"
+  },
+  "dependencies": {
+    "jimp": "^0.22.10"
+  }
+}
+

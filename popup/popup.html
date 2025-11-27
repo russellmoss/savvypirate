@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Savvy Pirate</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1><img src="../icons/icon16.png" alt="Skull" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 4px;"> Savvy Pirate</h1>
+            <div class="status-indicator" id="connectionStatus">
+                <span class="dot"></span>
+                <span class="text">Disconnected</span>
+            </div>
+        </header>
+
+        <!-- Input Sheet Section -->
+        <section class="section">
+            <h2>📥 Input Sheet</h2>
+            <div class="input-row">
+                <input type="text" id="inputSheetId" placeholder="Google Sheet ID">
+                <button id="loadSearchesBtn" class="btn btn-secondary">Load</button>
+            </div>
+            <!-- Search Progress Indicator (NEW) -->
+            <div class="search-progress" id="searchProgress">
+                <span class="progress-text" id="searchProgressText">Search 0 of 0</span>
+                <div class="progress-bar-mini">
+                    <div class="progress-fill-mini" id="searchProgressFill"></div>
+                </div>
+                <button id="refreshProgressBtn" class="btn-refresh" title="Reset search progress (removes checkmarks)" style="display: none;">
+                    🔄 Reset
+                </button>
+            </div>
+            <div class="search-list" id="searchList">
+                <p class="placeholder">Click "Load" to fetch searches...</p>
+            </div>
+        </section>
+
+        <!-- Output Sheet Section -->
+        <section class="section">
+            <h2>📤 Output Sheet</h2>
+            <div class="input-row">
+                <input type="text" id="newSheetName" placeholder="New sheet name...">
+                <button id="createSheetBtn" class="btn btn-secondary">Create</button>
+            </div>
+            <div class="input-row" style="margin-top: 8px;">
+                <input type="text" id="loadSheetId" placeholder="Sheet URL or ID...">
+                <button id="loadSheetBtn" class="btn btn-secondary">Load</button>
+            </div>
+            <div class="input-row" style="margin-top: 8px;">
+                <input type="text" id="newTabName" placeholder="New tab name...">
+                <button id="addTabBtn" class="btn btn-secondary">Add Tab</button>
+            </div>
+            <div class="current-output" id="currentOutput">
+                <span class="label">Active:</span>
+                <a href="#" id="outputSheetDisplay" class="value link" target="_blank" style="display: none;">None</a>
+                <span id="outputSheetDisplayText" class="value" style="display: inline;">None</span>
+            </div>
+            <div class="current-output" id="currentTabOutput" style="margin-top: 4px;">
+                <span class="label">Tab:</span>
+                <select id="tabSelector" class="tab-selector" style="display: none;">
+                    <option value="">Loading tabs...</option>
+                </select>
+                <span id="currentTabDisplay" class="value">Sheet1</span>
+            </div>
+        </section>
+
+        <!-- Queue Status Section (NEW) -->
+        <section class="section queue-section" id="queueSection">
+            <h2>📊 Sync Queue</h2>
+            <div class="queue-stats">
+                <div class="queue-stat pending">
+                    <span class="queue-number" id="pendingRows">0</span>
+                    <span class="queue-label">Pending</span>
+                </div>
+                <div class="queue-stat synced">
+                    <span class="queue-number" id="syncedRows">0</span>
+                    <span class="queue-label">Synced</span>
+                </div>
+                <div class="queue-stat failed" id="failedStat" style="display: none;">
+                    <span class="queue-number" id="failedRows">0</span>
+                    <span class="queue-label">Failed</span>
+                </div>
+            </div>
+            <div class="queue-actions" id="queueActions" style="display: none;">
+                <button id="retryFailedBtn" class="btn btn-small btn-warning">🔄 Retry</button>
+                <button id="downloadFailedBtn" class="btn btn-small btn-secondary">📥 Export CSV</button>
+            </div>
+        </section>
+
+        <!-- Actions -->
+        <section class="section actions">
+            <button id="startScrapingBtn" class="btn btn-primary btn-large" disabled>
+                🚀 Start Scraping
+            </button>
+            <button id="stopScrapingBtn" class="btn btn-danger" disabled>
+                🛑 Stop
+            </button>
+        </section>
+
+        <!-- Smart Navigation Panel (NEW) - Hidden by default -->
+        <section class="section next-search-panel" id="nextSearchPanel" style="display: none;">
+            <div class="completion-header">
+                <span class="completion-icon">✅</span>
+                <h2>Search Complete!</h2>
+            </div>
+            <div class="completion-summary" id="completionSummary">
+                <p>Scraped <strong id="completedProfiles">0</strong> profiles from <strong id="completedPages">0</strong> pages</p>
+            </div>
+            <div class="next-search-info" id="nextSearchInfo">
+                <div class="next-search-label">Next Search:</div>
+                <div class="next-search-details">
+                    <span class="next-source" id="nextSearchSource">-</span>
+                    <span class="next-title" id="nextSearchTitle">-</span>
+                </div>
+            </div>
+            <div class="next-search-actions">
+                <button id="proceedNextBtn" class="btn btn-primary btn-large">
+                    ▶️ Proceed to Next Search
+                </button>
+                <button id="dismissNextBtn" class="btn btn-secondary">
+                    Dismiss
+                </button>
+            </div>
+            <div class="all-complete-message" id="allCompleteMessage" style="display: none;">
+                <p>🎉 <strong>All searches complete!</strong></p>
+                <p class="sub-message">You've finished all configured searches.</p>
+            </div>
+        </section>
+
+        <!-- Status -->
+        <section class="status-section">
+            <div class="status-text" id="statusText">Ready</div>
+            <div class="progress-bar" id="progressBar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <a href="#" id="openOutputSheet" class="link" style="display: none;">
+                📊 Open Sheet
+            </a>
+            <a href="#" id="forceSync" class="link" title="Force sync pending rows">
+                🔄 Sync Now
+            </a>
+            <a href="#" id="deduplicateBtn" class="link" title="Remove duplicate rows based on Name column">
+                🧹 Deduplicate
+            </a>
+            <span class="version">v1.0.0 Diamond</span>
+        </footer>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,591 @@
+/* popup.css */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    width: 380px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a1a; /* Dark background for pirate theme */
+    color: #f0f0f0; /* Light text for contrast */
+}
+
+.container {
+    padding: 16px;
+}
+
+/* Header */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0077B5;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #666;
+}
+
+.status-indicator .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #dc3545;
+    transition: background 0.3s;
+}
+
+.status-indicator.connected .dot {
+    background: #28a745;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Sections */
+.section {
+    background: #2a2a2a; /* Dark gray background */
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    border: 1px solid #444; /* Subtle border */
+}
+
+.section h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #ff4444; /* Red for headings */
+    margin-bottom: 10px;
+}
+
+/* Input Rows */
+.input-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.input-row input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #555;
+    border-radius: 6px;
+    font-size: 13px;
+    background: #1a1a1a; /* Dark input background */
+    color: #f0f0f0; /* Light text */
+    transition: border-color 0.2s;
+}
+
+.input-row input:focus {
+    outline: none;
+    border-color: #dc3545; /* Red focus border */
+    box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.2);
+}
+
+.input-row input::placeholder {
+    color: #888; /* Lighter gray for placeholders */
+}
+
+/* Buttons */
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: #dc3545; /* Red primary button */
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #c82333; /* Darker red on hover */
+}
+
+.btn-secondary {
+    background: #444; /* Dark gray secondary */
+    color: #f0f0f0;
+    border: 1px solid #666;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #555;
+    border-color: #dc3545; /* Red border on hover */
+}
+
+.btn-danger {
+    background: #8b0000; /* Dark red danger */
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #a00000;
+}
+
+.btn-large {
+    flex: 1;
+    padding: 12px;
+    font-size: 14px;
+}
+
+/* Search List */
+.search-list {
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid #555;
+    border-radius: 6px;
+    background: #1a1a1a; /* Dark background */
+}
+
+.search-list .placeholder {
+    padding: 20px;
+    text-align: center;
+    color: #888;
+    font-size: 12px;
+}
+
+.search-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid #444;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.search-item:last-child {
+    border-bottom: none;
+}
+
+.search-item:hover {
+    background: #333; /* Dark gray hover */
+}
+
+.search-item.active {
+    background: #3a2a2a; /* Dark red tint for active */
+}
+
+.search-item .name {
+    font-size: 13px;
+    font-weight: 500;
+    color: #f0f0f0;
+}
+
+.search-item .title {
+    font-size: 11px;
+    color: #aaa;
+    margin-top: 2px;
+}
+
+.search-item .open-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    background: #dc3545; /* Red button */
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.search-item .open-btn:hover {
+    background: #c82333;
+}
+
+/* Current Output */
+.current-output {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #aaa;
+    padding: 8px;
+    background: #1a1a1a; /* Dark background */
+    border-radius: 4px;
+    border: 1px solid #444;
+}
+
+.current-output .label {
+    font-weight: 500;
+    color: #f0f0f0;
+}
+
+.current-output .value {
+    color: #ff6666; /* Light red for values */
+    word-break: break-all;
+}
+
+.current-output .value.link {
+    text-decoration: none;
+    cursor: pointer;
+    color: #ff6666;
+}
+
+.current-output .value.link:hover {
+    text-decoration: underline;
+    color: #ff4444;
+}
+
+/* Tab Selector */
+.tab-selector {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 12px;
+    background: #1a1a1a; /* Dark background */
+    color: #f0f0f0;
+    cursor: pointer;
+    max-width: 200px;
+}
+
+.tab-selector:hover {
+    border-color: #dc3545; /* Red border on hover */
+}
+
+.tab-selector:focus {
+    outline: none;
+    border-color: #dc3545;
+    box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.3);
+}
+
+/* Actions */
+.actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* Status Section */
+.status-section {
+    text-align: center;
+    padding: 12px 0;
+}
+
+.status-text {
+    font-size: 12px;
+    color: #aaa;
+    margin-bottom: 8px;
+}
+
+.progress-bar {
+    height: 4px;
+    background: #333;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #dc3545, #ff4444); /* Red gradient */
+    transition: width 0.3s ease;
+}
+
+/* Footer */
+.footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 12px;
+    border-top: 1px solid #444;
+    font-size: 11px;
+}
+
+.footer .link {
+    color: #ff6666; /* Red links */
+    text-decoration: none;
+}
+
+.footer .link:hover {
+    text-decoration: underline;
+    color: #ff4444;
+}
+
+.footer .version {
+    color: #888;
+}
+
+/* Scrollbar */
+.search-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.search-list::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+.search-list::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 3px;
+}
+
+.search-list::-webkit-scrollbar-thumb:hover {
+    background: #dc3545; /* Red on hover */
+}
+
+/* ============================================
+   NEW: Search Progress Indicator
+   ============================================ */
+.search-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 8px;
+    background: #2a1a1a; /* Dark red tint */
+    border-radius: 6px;
+    border: 1px solid #444;
+}
+
+.btn-refresh {
+    padding: 4px 10px;
+    font-size: 11px;
+    background: #555;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s;
+}
+
+.btn-refresh:hover {
+    background: #dc3545; /* Red on hover */
+}
+
+.search-progress .progress-text {
+    font-size: 12px;
+    font-weight: 500;
+    color: #ff6666; /* Red text */
+    white-space: nowrap;
+}
+
+.progress-bar-mini {
+    flex: 1;
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill-mini {
+    height: 100%;
+    width: 0%;
+    background: #dc3545; /* Red progress */
+    transition: width 0.3s ease;
+}
+
+/* ============================================
+   NEW: Queue Status Section
+   ============================================ */
+.queue-section {
+    background: linear-gradient(135deg, #2a1a1a, #1a1a1a); /* Dark red to black gradient */
+    border: 1px solid #555;
+}
+
+.queue-stats {
+    display: flex;
+    justify-content: space-around;
+    margin-bottom: 10px;
+}
+
+.queue-stat {
+    text-align: center;
+    padding: 8px 12px;
+    background: #1a1a1a; /* Dark background */
+    border-radius: 6px;
+    min-width: 70px;
+    border: 1px solid #444;
+}
+
+.queue-stat.pending .queue-number {
+    color: #ffaa00; /* Orange/yellow for pending */
+}
+
+.queue-stat.synced .queue-number {
+    color: #44ff44; /* Green for synced */
+}
+
+.queue-stat.failed .queue-number {
+    color: #ff4444; /* Red for failed */
+}
+
+.queue-number {
+    font-size: 20px;
+    font-weight: 700;
+    display: block;
+}
+
+.queue-label {
+    font-size: 10px;
+    color: #aaa;
+    text-transform: uppercase;
+}
+
+.queue-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.btn-small {
+    padding: 4px 10px;
+    font-size: 11px;
+}
+
+.btn-warning {
+    background: #ff8800; /* Orange warning */
+    color: #fff;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background: #ff6600;
+}
+
+/* ============================================
+   NEW: Smart Navigation Panel
+   ============================================ */
+.next-search-panel {
+    background: linear-gradient(135deg, #2a1a1a, #1a2a1a); /* Dark red/green gradient */
+    border: 2px solid #44ff44; /* Green border for success */
+}
+
+.completion-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.completion-icon {
+    font-size: 24px;
+}
+
+.completion-header h2 {
+    color: #44ff44; /* Green for success */
+    margin: 0;
+}
+
+.completion-summary {
+    background: #1a1a1a; /* Dark background */
+    padding: 10px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    text-align: center;
+    border: 1px solid #444;
+}
+
+.completion-summary p {
+    margin: 0;
+    font-size: 13px;
+    color: #f0f0f0;
+}
+
+.next-search-info {
+    background: #1a1a1a; /* Dark background */
+    padding: 10px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    border: 1px solid #444;
+}
+
+.next-search-label {
+    font-size: 11px;
+    color: #aaa;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.next-search-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.next-source {
+    font-size: 14px;
+    font-weight: 600;
+    color: #ff6666; /* Red for next source */
+}
+
+.next-title {
+    font-size: 12px;
+    color: #aaa;
+}
+
+.next-search-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.next-search-actions .btn-primary {
+    flex: 2;
+}
+
+.next-search-actions .btn-secondary {
+    flex: 1;
+}
+
+.all-complete-message {
+    text-align: center;
+    padding: 15px;
+    background: #1a1a1a; /* Dark background */
+    border-radius: 6px;
+    border: 1px solid #444;
+}
+
+.all-complete-message p {
+    margin: 0;
+    font-size: 14px;
+    color: #f0f0f0;
+}
+
+.all-complete-message .sub-message {
+    font-size: 12px;
+    color: #aaa;
+    margin-top: 4px;
+}
+
+/* Search item completed state */
+.search-item.completed {
+    background: #1a3a1a; /* Dark green tint */
+    opacity: 0.7;
+}
+
+.search-item.completed::after {
+    content: "✓";
+    color: #44ff44; /* Green checkmark */
+    font-weight: bold;
+    margin-left: 8px;
+}
+
+.search-item.current {
+    background: #3a2a1a; /* Dark orange/red tint */
+    border-left: 3px solid #ff6600; /* Orange border */
+}
