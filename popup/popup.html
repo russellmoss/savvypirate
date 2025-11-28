@@ -39,6 +39,124 @@
             </div>
         </section>
 
+        <!-- Workbook Manager Section (NEW - Phase 6) -->
+        <section class="section workbook-section">
+            <h2>📚 Workbook Manager</h2>
+            
+            <!-- Saved Workbooks Dropdown -->
+            <div class="workbook-selector">
+                <select id="savedWorkbooksSelect" class="workbook-dropdown">
+                    <option value="">-- Select a Saved Workbook --</option>
+                </select>
+                <button id="addWorkbookBtn" class="btn btn-small btn-secondary" title="Add new workbook">
+                    ➕
+                </button>
+            </div>
+            
+            <!-- Add Workbook Form (hidden by default) -->
+            <div class="add-workbook-form" id="addWorkbookForm" style="display: none;">
+                <input type="text" id="newWorkbookId" placeholder="Google Sheet ID or URL">
+                <input type="text" id="newWorkbookName" placeholder="Friendly name (e.g., Morgan Cirotto)">
+                <div class="form-actions">
+                    <button id="saveNewWorkbookBtn" class="btn btn-primary btn-small">Save</button>
+                    <button id="cancelAddWorkbookBtn" class="btn btn-secondary btn-small">Cancel</button>
+                </div>
+            </div>
+            
+            <!-- Selected Workbook Info -->
+            <div class="selected-workbook-info" id="selectedWorkbookInfo" style="display: none;">
+                <div class="workbook-details">
+                    <a href="#" id="selectedWorkbookName" class="workbook-name link" target="_blank">-</a>
+                    <span class="workbook-id" id="selectedWorkbookId">-</span>
+                </div>
+                <button id="removeWorkbookBtn" class="btn btn-small btn-danger" title="Remove from saved">
+                    🗑️
+                </button>
+            </div>
+            
+            <!-- Active Tab Display -->
+            <div class="active-tab-display" id="activeTabDisplay" style="display: none;">
+                <span class="tab-label">Active Tab:</span>
+                <span class="tab-name" id="activeTabName">-</span>
+                <span class="tab-status" id="activeTabStatus"></span>
+            </div>
+            
+            <!-- Active Sheet Checkbox -->
+            <div class="active-sheet-checkbox" id="workbookActiveCheckbox" style="display: none;">
+                <label>
+                    <input type="checkbox" id="workbookActiveCheck" class="active-sheet-check">
+                    <span>✓ Use this workbook as active sheet</span>
+                </label>
+            </div>
+        </section>
+
+        <!-- Compare Tabs Section (NEW - Phase 7) -->
+        <details class="section compare-section">
+            <summary>🔄 Compare Tabs</summary>
+            <div class="section-content">
+                <p class="section-description" style="font-size: 12px; color: #888; margin-bottom: 12px; font-style: italic;">
+                    Find entries that exist in one tab but not the other.
+                </p>
+                
+                <div class="form-group">
+                    <label for="compareTab1">Baseline Tab (older):</label>
+                    <select id="compareTab1" class="tab-select">
+                        <option value="">-- Select Tab --</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="compareTab2">Compare Tab (newer):</label>
+                    <select id="compareTab2" class="tab-select">
+                        <option value="">-- Select Tab --</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="compareOutputName">Output Tab Name:</label>
+                    <input type="text" id="compareOutputName" placeholder="e.g., new_leads" />
+                </div>
+                
+                <div class="form-group">
+                    <label for="compareKeyColumn">Compare By:</label>
+                    <select id="compareKeyColumn" class="key-select">
+                        <option value="1" selected>Name (Column B)</option>
+                        <option value="5">LinkedIn URL (Column F)</option>
+                    </select>
+                </div>
+                
+                <div class="button-row">
+                    <button id="compareBtn" class="btn btn-primary" disabled>
+                        🔄 Compare
+                    </button>
+                    <button id="refreshTabsBtn" class="btn btn-secondary">
+                        ↻ Refresh Tabs
+                    </button>
+                </div>
+                
+                <div id="compareResults" class="results-box" style="display: none;">
+                    <div class="result-item">
+                        <span class="result-label">Tab 1 Rows:</span>
+                        <span id="compareTab1Count">-</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Tab 2 Rows:</span>
+                        <span id="compareTab2Count">-</span>
+                    </div>
+                    <div class="result-item result-highlight">
+                        <span class="result-label">New Entries:</span>
+                        <span id="compareNewCount">-</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Output Tab:</span>
+                        <span id="compareOutputTab">-</span>
+                    </div>
+                </div>
+                
+                <div id="compareError" class="error-message" style="display: none;"></div>
+            </div>
+        </details>
+
         <!-- Output Sheet Section -->
         <section class="section">
             <h2>📤 Output Sheet</h2>
@@ -65,6 +183,13 @@
                     <option value="">Loading tabs...</option>
                 </select>
                 <span id="currentTabDisplay" class="value">Sheet1</span>
+            </div>
+            <!-- Active Sheet Checkbox -->
+            <div class="active-sheet-checkbox" id="outputActiveCheckbox" style="display: none;">
+                <label>
+                    <input type="checkbox" id="outputActiveCheck" class="active-sheet-check">
+                    <span>✓ Use this sheet as active sheet</span>
+                </label>
             </div>
         </section>
 

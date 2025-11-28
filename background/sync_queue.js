@@ -1,6 +1,6 @@
 // background/sync_queue.js - Resilient Local-First Sync Queue
 
-import { appendRows } from './sheets_api.js';
+import { appendRows, appendRowsToTab } from './sheets_api.js';
 
 const STORAGE_KEYS = {
     QUEUE: 'syncQueue',
@@ -114,11 +114,15 @@ export async function processQueue() {
     
     for (const item of queue) {
         try {
-            // Attempt to sync (use tabName from queue item, default to Sheet1)
-            const tabName = item.tabName || 'Sheet1';
-            await appendRows(item.spreadsheetId, item.rows, false, tabName);
+            // Attempt to sync - use tab-specific if available
+            if (item.tabName) {
+                await appendRowsToTab(item.spreadsheetId, item.tabName, item.rows);
+            } else {
+                // Fallback to default tab for backward compatibility
+                await appendRows(item.spreadsheetId, item.rows);
+            }
             synced += item.rows.length;
-            console.log(`[QUEUE] ✅ Synced item ${item.id} (${item.rows.length} rows to tab: ${tabName})`);
+            console.log(`[QUEUE] ✅ Synced item ${item.id} (${item.rows.length} rows → ${item.tabName || 'Sheet1'})`);
             
         } catch (error) {
             console.warn(`[QUEUE] ❌ Sync failed for ${item.id}:`, error.message);

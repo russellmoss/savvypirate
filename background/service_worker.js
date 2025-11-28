@@ -1,7 +1,7 @@
 // background/service_worker.js - Main Service Worker
 
 import { getAuthToken, removeCachedToken } from './auth.js';
-import { createSheet, appendRows, readSheet, deduplicateSheet, getSheetName, addTabToSheet, loadSheet, getSheetTabs } from './sheets_api.js';
+import { createSheet, appendRows, readSheet, deduplicateSheet, getSheetName, addTabToSheet, loadSheet, getSheetTabs, ensureWeeklyTab, appendRowsToTab, validateSpreadsheet, getTabData, compareTabs } from './sheets_api.js';
 import { 
     addToQueue, 
     processQueue, 
@@ -16,6 +16,10 @@ let currentOutputSheetId = null;
 let currentTabName = 'Sheet1'; // Default tab name
 let isScrapingActive = false;
 let currentSearchIndex = 0;
+
+// PHASE 6: Workbook & Tab State
+let currentActiveTab = null;        // The MM_DD_YY tab name we're writing to (weekly runs)
+let savedWorkbooks = [];            // Array of { id, name, sheetTitle, lastUsed, lastTab, addedAt }
 
 // --- ALARMS ---
 const KEEPALIVE_ALARM = 'keepalive-alarm';
@@ -247,11 +251,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         'outputSheetName',
                         'currentTabName',
                         'searches',
-                        'searchIndex'
+                        'searchIndex',
+                        'savedWorkbooks',
+                        'activeTab'
                     ]);
                     currentOutputSheetId = settings.outputSheetId || null;
                     currentTabName = settings.currentTabName || 'Sheet1';
                     currentSearchIndex = settings.searchIndex || 0;
+                    savedWorkbooks = settings.savedWorkbooks || [];
+                    currentActiveTab = settings.activeTab || null;
                     response.settings = settings;
                     break;
                 }
@@ -281,9 +289,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 // --- DATA HANDLING (Queue-Based) ---
                 case 'DATA_SCRAPED': {
                     if (currentOutputSheetId && message.rows && message.rows.length > 0) {
-                        // Add to queue instead of direct API call (include tab name)
-                        await addToQueue(message.rows, currentOutputSheetId, currentTabName);
-                        console.log(`[SW] Queued page ${message.pageNumber}: ${message.rows.length} rows to tab: ${currentTabName}`);
+                        // PHASE 6: Use currentActiveTab (weekly tab) or fall back to currentTabName (manual selection)
+                        const tabName = currentActiveTab || currentTabName || 'Sheet1';
+                        await addToQueue(message.rows, currentOutputSheetId, tabName);
+                        console.log(`[SW] Queued page ${message.pageNumber}: ${message.rows.length} rows to tab: ${tabName}`);
                     }
                     break;
                 }
@@ -343,18 +352,201 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 }
                 
                 case 'DEDUPLICATE_SHEET': {
-                    if (!currentOutputSheetId) {
+                    // Use provided spreadsheetId and tabName, or fall back to current
+                    const spreadsheetId = message.spreadsheetId || currentOutputSheetId;
+                    const tabName = message.tabName || currentTabName || 'Sheet1';
+                    
+                    if (!spreadsheetId) {
                         response = { success: false, error: 'No output sheet selected' };
                         break;
                     }
-                    const result = await deduplicateSheet(currentOutputSheetId, currentTabName);
+                    
+                    const result = await deduplicateSheet(spreadsheetId, tabName);
                     response = { success: true, ...result };
+                    break;
+                }
+                
+                // ============================================================
+                // PHASE 7: TAB COMPARISON
+                // ============================================================
+                
+                case 'COMPARE_TABS': {
+                    const spreadsheetId = message.spreadsheetId || currentOutputSheetId;
+                    const { tab1Name, tab2Name, outputTabName, keyColumn } = message;
+                    
+                    // Validate required parameters
+                    if (!spreadsheetId) {
+                        response = { success: false, error: 'No spreadsheet selected' };
+                        break;
+                    }
+                    if (!tab1Name || !tab2Name) {
+                        response = { success: false, error: 'Please select two tabs to compare' };
+                        break;
+                    }
+                    if (!outputTabName) {
+                        response = { success: false, error: 'Please enter a name for the output tab' };
+                        break;
+                    }
+                    if (tab1Name === tab2Name) {
+                        response = { success: false, error: 'Please select two different tabs' };
+                        break;
+                    }
+                    
+                    console.log(`[SW] Comparing tabs: "${tab1Name}" vs "${tab2Name}" → "${outputTabName}"`);
+                    
+                    const result = await compareTabs(
+                        spreadsheetId, 
+                        tab1Name, 
+                        tab2Name, 
+                        outputTabName, 
+                        keyColumn || 1  // Default to Name column
+                    );
+                    
+                    response = { success: result.success, ...result };
+                    break;
+                }
+                
+                case 'GET_TAB_DATA': {
+                    const spreadsheetId = message.spreadsheetId || currentOutputSheetId;
+                    const { tabName } = message;
+                    
+                    if (!spreadsheetId) {
+                        response = { success: false, error: 'No spreadsheet selected' };
+                        break;
+                    }
+                    if (!tabName) {
+                        response = { success: false, error: 'No tab name provided' };
+                        break;
+                    }
+                    
+                    const data = await getTabData(spreadsheetId, tabName);
+                    response = { success: true, ...data };
                     break;
                 }
                 
                 case 'STATUS_UPDATE': {
                     // Forward to popup
                     chrome.runtime.sendMessage(message).catch(() => {});
+                    break;
+                }
+                
+                // ============================================================
+                // PHASE 6: WORKBOOK MANAGEMENT
+                // ============================================================
+                
+                case 'GET_SAVED_WORKBOOKS': {
+                    const stored = await getFromStorage(['savedWorkbooks']);
+                    savedWorkbooks = stored.savedWorkbooks || [];
+                    response = { success: true, workbooks: savedWorkbooks };
+                    break;
+                }
+                
+                case 'SAVE_WORKBOOK': {
+                    const { id, name } = message;
+                    
+                    // Validate the spreadsheet first
+                    const validation = await validateSpreadsheet(id);
+                    if (!validation.valid) {
+                        response = { success: false, error: validation.error };
+                        break;
+                    }
+                    
+                    // Load existing workbooks
+                    const existingData = await getFromStorage(['savedWorkbooks']);
+                    savedWorkbooks = existingData.savedWorkbooks || [];
+                    
+                    // Check if already saved
+                    const existingIndex = savedWorkbooks.findIndex(w => w.id === id);
+                    
+                    const workbookEntry = {
+                        id,
+                        name: name || validation.title,
+                        sheetTitle: validation.title,
+                        lastUsed: new Date().toISOString(),
+                        addedAt: existingIndex >= 0 
+                            ? savedWorkbooks[existingIndex].addedAt 
+                            : new Date().toISOString()
+                    };
+                    
+                    if (existingIndex >= 0) {
+                        // Update existing
+                        savedWorkbooks[existingIndex] = workbookEntry;
+                    } else {
+                        // Add new
+                        savedWorkbooks.push(workbookEntry);
+                    }
+                    
+                    await saveToStorage({ savedWorkbooks });
+                    console.log(`[SW] Saved workbook: ${workbookEntry.name} (${id.substring(0, 10)}...)`);
+                    
+                    response = { success: true, workbook: workbookEntry };
+                    break;
+                }
+                
+                case 'DELETE_WORKBOOK': {
+                    const { id } = message;
+                    
+                    const existingData = await getFromStorage(['savedWorkbooks']);
+                    savedWorkbooks = existingData.savedWorkbooks || [];
+                    
+                    savedWorkbooks = savedWorkbooks.filter(w => w.id !== id);
+                    
+                    await saveToStorage({ savedWorkbooks });
+                    console.log(`[SW] Deleted workbook: ${id.substring(0, 10)}...`);
+                    
+                    response = { success: true, workbooks: savedWorkbooks };
+                    break;
+                }
+                
+                case 'VALIDATE_SPREADSHEET': {
+                    const validation = await validateSpreadsheet(message.spreadsheetId);
+                    response = { success: validation.valid, ...validation };
+                    break;
+                }
+                
+                case 'ENSURE_WEEKLY_TAB': {
+                    const result = await ensureWeeklyTab(message.spreadsheetId);
+                    
+                    // Set this as the active output
+                    currentOutputSheetId = result.spreadsheetId;
+                    currentActiveTab = result.tabName;
+                    
+                    // Update last used
+                    const stored = await getFromStorage(['savedWorkbooks']);
+                    savedWorkbooks = stored.savedWorkbooks || [];
+                    const wbIndex = savedWorkbooks.findIndex(w => w.id === result.spreadsheetId);
+                    if (wbIndex >= 0) {
+                        savedWorkbooks[wbIndex].lastUsed = new Date().toISOString();
+                        savedWorkbooks[wbIndex].lastTab = result.tabName;
+                        await saveToStorage({ savedWorkbooks });
+                    }
+                    
+                    await saveToStorage({ 
+                        outputSheetId: result.spreadsheetId,
+                        activeTab: result.tabName 
+                    });
+                    
+                    response = { success: true, ...result };
+                    break;
+                }
+                
+                case 'SET_ACTIVE_TAB': {
+                    currentActiveTab = message.tabName;
+                    currentOutputSheetId = message.spreadsheetId;
+                    await saveToStorage({ 
+                        activeTab: message.tabName,
+                        outputSheetId: message.spreadsheetId
+                    });
+                    response = { success: true };
+                    break;
+                }
+                
+                case 'GET_ACTIVE_OUTPUT': {
+                    response = { 
+                        success: true, 
+                        spreadsheetId: currentOutputSheetId,
+                        tabName: currentActiveTab
+                    };
                     break;
                 }
                 
@@ -382,10 +574,12 @@ chrome.runtime.onInstalled.addListener(() => {
 // Load settings and start queue processor on startup
 (async () => {
     try {
-        const settings = await getFromStorage(['outputSheetId', 'currentTabName', 'searchIndex']);
+        const settings = await getFromStorage(['outputSheetId', 'currentTabName', 'searchIndex', 'savedWorkbooks', 'activeTab']);
         currentOutputSheetId = settings.outputSheetId || null;
         currentTabName = settings.currentTabName || 'Sheet1';
         currentSearchIndex = settings.searchIndex || 0;
+        savedWorkbooks = settings.savedWorkbooks || [];
+        currentActiveTab = settings.activeTab || null;
         startQueueProcessor(); // Ensure queue processor runs
         console.log('[SW] Service worker initialized');
     } catch (error) {

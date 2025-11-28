@@ -166,6 +166,21 @@ export async function appendRows(spreadsheetId, rows, deduplicate = false, tabNa
 }
 
 /**
+ * Format a tab name for use in a range string
+ * Wraps tab names with spaces or special characters in single quotes
+ * @param {string} tabName - The tab name
+ * @returns {string} Formatted tab name for use in ranges
+ */
+function formatTabNameForRange(tabName) {
+    // If tab name contains spaces, single quotes, or special characters, wrap it in single quotes
+    // Escape single quotes in the tab name by doubling them
+    if (tabName.includes(' ') || tabName.includes("'") || tabName.includes('!') || tabName.includes('[')) {
+        return `'${tabName.replace(/'/g, "''")}'`;
+    }
+    return tabName;
+}
+
+/**
  * Read data from a spreadsheet
  * @param {string} spreadsheetId - Source spreadsheet ID
  * @param {string} range - Cell range (e.g., "Sheet1!A:Z")
@@ -179,6 +194,133 @@ export async function readSheet(spreadsheetId, range = 'Sheet1!A:Z') {
     const rows = data.values || [];
     console.log(`[SHEETS] Read ${rows.length} rows`);
     return rows;
+}
+
+/**
+ * Get all data from a specific tab
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tabName - The tab to read from
+ * @returns {Promise<{headers: Array, rows: Array, rowCount: number}>}
+ */
+export async function getTabData(spreadsheetId, tabName) {
+    console.log(`[SHEETS] Getting data from tab "${tabName}"...`);
+    
+    const formattedTabName = formatTabNameForRange(tabName);
+    const allData = await readSheet(spreadsheetId, `${formattedTabName}!A:Z`);
+    
+    if (!allData || allData.length === 0) {
+        console.log(`[SHEETS] Tab "${tabName}" is empty`);
+        return { headers: [], rows: [], rowCount: 0 };
+    }
+    
+    const headers = allData[0] || [];
+    const rows = allData.slice(1);
+    
+    console.log(`[SHEETS] Tab "${tabName}" has ${rows.length} data rows`);
+    return { headers, rows, rowCount: rows.length };
+}
+
+/**
+ * Compare two tabs and create a differential list
+ * Finds entries that exist in tab2 but NOT in tab1 (new entries)
+ * 
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tab1Name - The "baseline" tab (older data)
+ * @param {string} tab2Name - The "compare" tab (newer data) 
+ * @param {string} outputTabName - Name for the output tab with differential
+ * @param {number} keyColumn - Column index to use as unique key (default: 1 for Name)
+ * @returns {Promise<{success: boolean, newEntries: number, tab1Count: number, tab2Count: number, outputTabName: string, error?: string}>}
+ */
+export async function compareTabs(spreadsheetId, tab1Name, tab2Name, outputTabName, keyColumn = 1) {
+    console.log(`[SHEETS] Comparing tabs: "${tab1Name}" vs "${tab2Name}" → "${outputTabName}"`);
+    
+    try {
+        // Step 1: Read data from both tabs
+        const tab1Data = await getTabData(spreadsheetId, tab1Name);
+        const tab2Data = await getTabData(spreadsheetId, tab2Name);
+        
+        console.log(`[SHEETS] Tab1 "${tab1Name}": ${tab1Data.rowCount} rows`);
+        console.log(`[SHEETS] Tab2 "${tab2Name}": ${tab2Data.rowCount} rows`);
+        
+        // Step 2: Build a Set of keys from tab1 (baseline)
+        const tab1Keys = new Set();
+        for (const row of tab1Data.rows) {
+            const keyValue = row[keyColumn];
+            if (keyValue) {
+                tab1Keys.add(String(keyValue).toLowerCase().trim());
+            }
+        }
+        console.log(`[SHEETS] Tab1 has ${tab1Keys.size} unique keys`);
+        
+        // Step 3: Find rows in tab2 that are NOT in tab1
+        const newRows = [];
+        const seenInTab2 = new Set(); // Avoid duplicates within tab2
+        
+        for (const row of tab2Data.rows) {
+            const keyValue = row[keyColumn];
+            if (!keyValue) continue; // Skip rows without key
+            
+            const normalizedKey = String(keyValue).toLowerCase().trim();
+            
+            // Check if this key is NOT in tab1 AND we haven't already added it
+            if (!tab1Keys.has(normalizedKey) && !seenInTab2.has(normalizedKey)) {
+                newRows.push(row);
+                seenInTab2.add(normalizedKey);
+            }
+        }
+        
+        console.log(`[SHEETS] Found ${newRows.length} new entries in "${tab2Name}"`);
+        
+        // Step 4: Check if output tab already exists
+        const existingTabs = await getSheetTabs(spreadsheetId);
+        const tabExists = existingTabs.some(t => t.title === outputTabName);
+        
+        if (tabExists) {
+            console.log(`[SHEETS] Tab "${outputTabName}" already exists`);
+            return {
+                success: false,
+                error: `Tab "${outputTabName}" already exists. Please choose a different name.`,
+                newEntries: 0,
+                tab1Count: tab1Data.rowCount,
+                tab2Count: tab2Data.rowCount,
+                outputTabName
+            };
+        }
+        
+        // Step 5: Create new tab (addTabToSheet automatically adds HEADERS_ROW)
+        await addTabToSheet(spreadsheetId, outputTabName);
+        console.log(`[SHEETS] Created output tab: "${outputTabName}"`);
+        
+        // Step 6: Write differential rows (if any)
+        // Note: Headers are already added by addTabToSheet, so we only write data rows
+        if (newRows.length > 0) {
+            await appendRows(spreadsheetId, newRows, false, outputTabName);
+            console.log(`[SHEETS] Wrote ${newRows.length} rows to "${outputTabName}"`);
+        } else {
+            console.log(`[SHEETS] No new entries to write (output tab has headers only)`);
+        }
+        
+        console.log(`[SHEETS] ✅ Comparison complete: ${newRows.length} new entries`);
+        
+        return {
+            success: true,
+            newEntries: newRows.length,
+            tab1Count: tab1Data.rowCount,
+            tab2Count: tab2Data.rowCount,
+            outputTabName
+        };
+        
+    } catch (error) {
+        console.error(`[SHEETS] Compare error:`, error);
+        return {
+            success: false,
+            error: error.message,
+            newEntries: 0,
+            tab1Count: 0,
+            tab2Count: 0,
+            outputTabName
+        };
+    }
 }
 
 /**
@@ -307,8 +449,11 @@ export async function getSheetTabs(spreadsheetId) {
 export async function deduplicateSheet(spreadsheetId, tabName = 'Sheet1') {
     console.log(`[SHEETS] Deduplicating ${spreadsheetId.substring(0, 10)} (tab: ${tabName})...`);
     
+    // Format tab name for range (handle spaces and special characters)
+    const formattedTabName = formatTabNameForRange(tabName);
+    
     // Read all data - use a large range to get everything
-    const allRows = await readSheet(spreadsheetId, `${tabName}!A1:Z10000`);
+    const allRows = await readSheet(spreadsheetId, `${formattedTabName}!A1:Z10000`);
     
     if (allRows.length <= 1) {
         console.log('[SHEETS] No data to deduplicate (only header or empty)');
@@ -430,7 +575,7 @@ export async function deduplicateSheet(spreadsheetId, tabName = 'Sheet1') {
     };
     
     const endCol = getColumnLetter(numCols);
-    const range = `${tabName}!A1:${endCol}${allUniqueRows.length}`;
+    const range = `${formattedTabName}!A1:${endCol}${allUniqueRows.length}`;
     
     console.log(`[SHEETS] Writing ${allUniqueRows.length} rows (1 header + ${uniqueRows.length} data) to range: ${range}`);
     
@@ -452,5 +597,172 @@ export async function deduplicateSheet(spreadsheetId, tabName = 'Sheet1') {
         total: originalCount,
         unique: uniqueRows.length
     };
+}
+
+// ============================================================
+// PHASE 6: WORKBOOK & TAB MANAGEMENT
+// ============================================================
+
+/**
+ * Get today's date formatted as MM_DD_YY
+ * @returns {string} e.g., "11_27_25"
+ */
+function getTodayTabName() {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const year = String(now.getFullYear()).slice(-2);
+    return `${month}_${day}_${year}`;
+}
+
+/**
+ * Create a new tab in a workbook (without headers)
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tabName - Name for the new tab
+ * @returns {Promise<{sheetId: number, title: string}>}
+ */
+export async function createTab(spreadsheetId, tabName) {
+    console.log(`[SHEETS] Creating tab "${tabName}" in ${spreadsheetId.substring(0, 10)}...`);
+    
+    const result = await apiCall(`/${spreadsheetId}:batchUpdate`, {
+        method: 'POST',
+        body: JSON.stringify({
+            requests: [{
+                addSheet: {
+                    properties: {
+                        title: tabName
+                    }
+                }
+            }]
+        })
+    });
+    
+    const newSheet = result.replies?.[0]?.addSheet?.properties;
+    console.log(`[SHEETS] Created tab: ${newSheet?.title} (ID: ${newSheet?.sheetId})`);
+    
+    return {
+        sheetId: newSheet?.sheetId,
+        title: newSheet?.title
+    };
+}
+
+/**
+ * Write headers to a specific tab
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tabName - The tab to write to
+ * @returns {Promise<void>}
+ */
+export async function writeHeadersToTab(spreadsheetId, tabName) {
+    console.log(`[SHEETS] Writing headers to "${tabName}"...`);
+    
+    // HEADERS_ROW has 12 columns, so use A1:L1
+    const lastColumn = String.fromCharCode(64 + HEADERS_ROW.length); // L for 12 columns
+    const range = `'${tabName}'!A1:${lastColumn}1`;
+    
+    await apiCall(
+        `/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+        {
+            method: 'PUT',
+            body: JSON.stringify({
+                values: [HEADERS_ROW]
+            })
+        }
+    );
+    
+    console.log(`[SHEETS] Headers written to "${tabName}"`);
+}
+
+/**
+ * Append rows to a SPECIFIC TAB in a workbook
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tabName - The tab to append to
+ * @param {Array<Array>} rows - Data rows
+ * @returns {Promise<object>}
+ */
+export async function appendRowsToTab(spreadsheetId, tabName, rows) {
+    if (!rows || rows.length === 0) {
+        console.log('[SHEETS] No rows to append, skipping');
+        return null;
+    }
+    
+    console.log(`[SHEETS] Appending ${rows.length} rows to "${tabName}"...`);
+    
+    const range = `'${tabName}'!A1`;
+    
+    const result = await apiCall(
+        `/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+        {
+            method: 'POST',
+            body: JSON.stringify({ values: rows })
+        }
+    );
+    
+    console.log(`[SHEETS] Appended ${rows.length} rows to "${tabName}"`);
+    return result;
+}
+
+/**
+ * SMART TAB CREATION: Ensures today's dated tab exists
+ * Creates it with headers if it doesn't exist
+ * 
+ * @param {string} spreadsheetId - The workbook ID
+ * @returns {Promise<{tabName: string, isNew: boolean, spreadsheetId: string}>}
+ */
+export async function ensureWeeklyTab(spreadsheetId) {
+    const tabName = getTodayTabName();
+    console.log(`[SHEETS] Ensuring weekly tab "${tabName}" exists...`);
+    
+    // Get existing tabs (returns Array<{title: string, sheetId: number}>)
+    const existingTabsData = await getSheetTabs(spreadsheetId);
+    const existingTabNames = existingTabsData.map(tab => tab.title);
+    
+    // Check if today's tab already exists
+    if (existingTabNames.includes(tabName)) {
+        console.log(`[SHEETS] Tab "${tabName}" already exists, reusing`);
+        return {
+            tabName,
+            isNew: false,
+            spreadsheetId
+        };
+    }
+    
+    // Create new tab
+    console.log(`[SHEETS] Tab "${tabName}" not found, creating...`);
+    await createTab(spreadsheetId, tabName);
+    
+    // Write headers to the new tab
+    await writeHeadersToTab(spreadsheetId, tabName);
+    
+    console.log(`[SHEETS] ✅ Weekly tab "${tabName}" ready`);
+    return {
+        tabName,
+        isNew: true,
+        spreadsheetId
+    };
+}
+
+/**
+ * Validate that a spreadsheet ID is accessible
+ * @param {string} spreadsheetId - The workbook ID to validate
+ * @returns {Promise<{valid: boolean, title: string, error?: string}>}
+ */
+export async function validateSpreadsheet(spreadsheetId) {
+    try {
+        console.log(`[SHEETS] Validating spreadsheet ${spreadsheetId.substring(0, 10)}...`);
+        
+        const data = await apiCall(`/${spreadsheetId}?fields=properties.title`);
+        
+        return {
+            valid: true,
+            title: data.properties?.title || 'Untitled'
+        };
+    } catch (error) {
+        console.error(`[SHEETS] Validation failed:`, error.message);
+        return {
+            valid: false,
+            title: '',
+            error: error.message
+        };
+    }
 }
 

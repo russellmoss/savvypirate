@@ -58,6 +58,135 @@ body {
     50% { opacity: 0.5; }
 }
 
+/* ============================================================
+   PHASE 7: COMPARE TABS SECTION
+   ============================================================ */
+
+.compare-section .section-content {
+    padding: 10px 0;
+}
+
+.compare-section .section-description {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 12px;
+    font-style: italic;
+}
+
+.compare-section .tab-select,
+.compare-section .key-select {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background: #1a1a1a;
+    color: #fff;
+    font-size: 13px;
+}
+
+.compare-section .tab-select:focus,
+.compare-section .key-select:focus {
+    border-color: #dc3545;
+    outline: none;
+}
+
+.compare-section .button-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.compare-section .btn-secondary {
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.compare-section .btn-secondary:hover {
+    background: #444;
+}
+
+.results-box {
+    margin-top: 15px;
+    padding: 12px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 6px;
+}
+
+.results-box .result-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #2a2a2a;
+    font-size: 13px;
+}
+
+.results-box .result-item:last-child {
+    border-bottom: none;
+}
+
+.results-box .result-label {
+    color: #888;
+}
+
+.results-box .result-item span:last-child {
+    color: #fff;
+    font-weight: 500;
+}
+
+.results-box .result-highlight {
+    background: rgba(220, 53, 69, 0.15);
+    margin: 4px -12px;
+    padding: 8px 12px;
+    border-radius: 4px;
+}
+
+.results-box .result-highlight .result-label {
+    color: #dc3545;
+    font-weight: 600;
+}
+
+.results-box .result-highlight span:last-child {
+    color: #dc3545;
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.error-message {
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(220, 53, 69, 0.2);
+    border: 1px solid #dc3545;
+    border-radius: 4px;
+    color: #ff6b6b;
+    font-size: 12px;
+}
+
+/* Compare button states */
+.compare-section #compareBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.compare-section #compareBtn.loading {
+    position: relative;
+    color: transparent;
+}
+
+.compare-section #compareBtn.loading::after {
+    content: "⏳";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #fff;
+    animation: pulse 1s infinite;
+}
+
 /* Sections */
 .section {
     background: #2a2a2a; /* Dark gray background */
@@ -588,4 +717,209 @@ body {
 .search-item.current {
     background: #3a2a1a; /* Dark orange/red tint */
     border-left: 3px solid #ff6600; /* Orange border */
+}
+
+/* ============================================
+   PHASE 6: Workbook Manager Styles
+   ============================================ */
+
+.workbook-section {
+    background: #2a2a2a; /* Match existing section background */
+    border: 1px solid #dc3545; /* Red border for pirate theme */
+}
+
+.workbook-selector {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.workbook-dropdown {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid #555;
+    border-radius: 6px;
+    font-size: 13px;
+    background: #1a1a1a; /* Dark background */
+    color: #f0f0f0; /* Light text */
+    cursor: pointer;
+}
+
+.workbook-dropdown:focus {
+    outline: none;
+    border-color: #dc3545; /* Red focus border */
+    box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.2);
+}
+
+.add-workbook-form {
+    background: #1a1a1a;
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px dashed #dc3545; /* Red dashed border */
+}
+
+.add-workbook-form input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 12px;
+    margin-bottom: 8px;
+    background: #2a2a2a;
+    color: #f0f0f0;
+}
+
+.add-workbook-form input:focus {
+    outline: none;
+    border-color: #dc3545; /* Red focus border */
+}
+
+.form-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.selected-workbook-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #1a1a1a;
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px solid #555;
+}
+
+.workbook-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.workbook-name {
+    font-weight: 600;
+    color: #ff4444; /* Red for names */
+    font-size: 14px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.workbook-name:hover {
+    color: #dc3545; /* Darker red on hover */
+    text-decoration: underline;
+}
+
+.workbook-id {
+    font-size: 10px;
+    color: #888;
+    font-family: monospace;
+}
+
+.active-tab-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: #1a3a1a; /* Dark green background */
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px solid #28a745; /* Green border */
+}
+
+.tab-label {
+    font-size: 12px;
+    color: #44ff44; /* Light green */
+}
+
+.tab-name {
+    font-weight: 700;
+    font-size: 14px;
+    color: #44ff44; /* Light green */
+    font-family: monospace;
+}
+
+.tab-status {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-left: auto;
+}
+
+.tab-status.new {
+    background: #28a745; /* Green */
+    color: white;
+}
+
+.tab-status.existing {
+    background: #666; /* Gray */
+    color: white;
+}
+
+.helper-text {
+    font-size: 11px;
+    color: #888;
+    text-align: center;
+    margin: 8px 0 0 0;
+}
+
+/* Legacy output section styling */
+.output-section-legacy {
+    background: #2a2a2a;
+}
+
+.output-section-legacy summary {
+    cursor: pointer;
+    font-weight: 500;
+    color: #888;
+    padding: 4px 0;
+}
+
+.output-section-legacy summary:hover {
+    color: #ff4444; /* Red on hover */
+}
+
+/* Workbook item in dropdown - colored by recency */
+.workbook-dropdown option.recent {
+    color: #44ff44; /* Green for recent */
+}
+
+.workbook-dropdown option.stale {
+    color: #ff4444; /* Red for stale */
+}
+
+/* Active Sheet Checkbox Styles */
+.active-sheet-checkbox {
+    margin-top: 10px;
+    padding: 8px;
+    background: #1a1a1a;
+    border-radius: 6px;
+    border: 1px solid #444;
+}
+
+.active-sheet-checkbox label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    color: #f0f0f0;
+    font-size: 13px;
+    user-select: none;
+}
+
+.active-sheet-checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #dc3545; /* Red accent for pirate theme */
+}
+
+.active-sheet-checkbox input[type="checkbox"]:checked {
+    background: #dc3545;
+}
+
+.active-sheet-checkbox label:hover {
+    color: #ff4444;
 }

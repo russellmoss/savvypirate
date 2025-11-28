@@ -3218,68 +3218,3708 @@ init();
 
 ---
 
-## 🔧 PHASE 6: Error Handling & Polish
+## 🚀 PHASE 6: Workbook Manager & Smart Tab Creation
 
-### Task 6.1: Add Robust Error Handling
-
-**Cursor Prompt:**
+### Agent Context
 ```
-Review all files (content.js, background.js, popup.js) and add:
-1. Try-catch blocks around all async operations
-2. User-friendly error messages
-3. Retry logic for API calls (max 3 retries)
-4. Graceful degradation when features fail
-5. Console logging for debugging (prefix with [LSP])
-```
+You are a Senior Chrome Extension Developer working on Phase 6 of the Savvy Pirate extension.
+Current state: Extension has tab management (load sheets, add tabs, select tabs).
+Goal: Add workbook persistence and automatic dated tab creation (MM_DD_YY format).
 
-### Task 6.2: Add Rate Limiting Protection
-
-**Cursor Prompt:**
-```
-In content.js, add intelligent rate limiting:
-1. Increase delay if getting many empty results
-2. Random jitter on all delays (±20%)
-3. Pause if detecting potential rate limiting (empty pages)
-4. Maximum session duration warning (after 30 minutes)
-```
-
-### Task 6.3: Final Code Review Checklist
-
-```markdown
-## Pre-Deployment Checklist
-
-### manifest.json
-- [ ] client_id is set correctly
-- [ ] All permissions are minimal and necessary
-- [ ] Version number is correct
-
-### content.js
-- [ ] All selectors match current LinkedIn DOM
-- [ ] Stop button removes cleanly
-- [ ] No memory leaks in loops
-- [ ] Messages send successfully
-
-### background.js
-- [ ] Token refresh works
-- [ ] All API endpoints are correct
-- [ ] Error responses include details
-- [ ] Storage operations don't corrupt data
-
-### popup.js
-- [ ] All buttons have handlers
-- [ ] State persists across popup open/close
-- [ ] No unhandled promise rejections
-- [ ] UI updates reflect actual state
-
-### General
-- [ ] Console has no errors during normal operation
-- [ ] Extension works after Chrome restart
-- [ ] Multiple tabs don't interfere
+EXECUTION RULES:
+1. Complete tasks in ORDER (6.1 → 6.2 → 6.3 → 6.4 → 6.5 → 6.6)
+2. After each task, verify syntax with linter before proceeding
+3. Test each component as you build it
+4. Do NOT proceed to next task until current task passes gate check
+5. All code additions should maintain existing functionality
+6. Use existing patterns from the codebase (fetchWithRetry, error handling, etc.)
+7. Check existing code FIRST before adding new code (some functions may already exist)
 ```
 
 ---
 
-## 📦 PHASE 7: Packaging & Deployment
+## 🚀 EXECUTION START
+
+**Before starting, read this entire section:**
+
+### Quick Start Command
+```
+Follow the plan in linkedin-scraper-plan.md exactly.
+
+EXECUTION ORDER:
+Task 6.1 → Gate Check 6.1 → Task 6.2 → Gate Check 6.2 → Task 6.3 → Gate Check 6.3 
+→ Task 6.4 → Gate Check 6.4 → Task 6.5 → Gate Check 6.5 → Task 6.6 → Gate Check 6.6 
+→ Integration Testing
+
+START: Task 6.1 - Update Sheets API Module
+```
+
+### Pre-Flight Verification
+Before starting Task 6.1, verify these files exist:
+```bash
+ls background/sheets_api.js      # Should exist
+ls background/service_worker.js  # Should exist
+ls background/sync_queue.js      # Should exist
+ls popup/popup.html              # Should exist
+ls popup/popup.js                # Should exist
+```
+
+### Important Notes
+- **Check existing code first** - Some functions (like `getSheetTabs`) may already exist
+- **Don't duplicate code** - If a function exists, import it instead of re-creating
+- **Maintain backward compatibility** - Existing functionality must continue to work
+- **Follow existing patterns** - Use the same error handling, logging, and structure
+
+---
+
+## 🎯 Phase Overview
+
+This phase transforms the extension from "create a new sheet every time" to "select a saved workbook and auto-create dated tabs." This supports your weekly differential workflow for tracking new connections.
+
+### What This Phase Adds:
+1. **Workbook Persistence** - Save/recall multiple Google Sheets (Morgan, Taylor, etc.)
+2. **Smart Tab Creation** - Auto-create `MM_DD_YY` tabs within selected workbook
+3. **Workbook Manager UI** - Add, select, and remove workbooks from popup
+4. **Tab Detection** - Check if today's tab exists before creating
+
+### Workflow After This Phase:
+```
+1. Open extension
+2. Select "Morgan Cirotto" from saved workbooks dropdown
+3. Click "Start Weekly Run"
+4. Extension automatically:
+   - Creates "11_27_25" tab if it doesn't exist
+   - Writes headers to new tab
+   - Scrapes data into that tab
+5. Next week: Same process → Creates "12_04_25" tab
+6. Compare tabs in Google Sheets to find new connections
+```
+
+### Prerequisites (Verify Before Starting):
+- [ ] Extension is currently working (can scrape to Google Sheets)
+- [ ] Tab management exists (can add tabs, select tabs)
+- [ ] You have access to at least one test Google Sheet for validation
+- [ ] Chrome extension is loaded and functional
+
+---
+
+## 📋 Execution Checklist
+
+Before starting, verify these files exist and are readable:
+- [ ] `background/sheets_api.js` - Should have `getSheetTabs()`, `addTabToSheet()` functions
+- [ ] `background/service_worker.js` - Should handle `LOAD_SHEET`, `ADD_TAB` messages
+- [ ] `popup/popup.html` - Should have tab selector dropdown
+- [ ] `popup/popup.js` - Should have tab management logic
+- [ ] `background/sync_queue.js` - Should accept `tabName` parameter
+
+---
+
+## 🏗️ Architecture Overview
+
+```
+┌─────────────────┐
+│  Popup UI       │
+│  - Workbook     │──┐
+│    Dropdown     │  │
+│  - Add/Remove   │  │
+│  - Weekly Run   │  │
+└─────────────────┘  │
+                     │ Messages
+                     ▼
+┌─────────────────────────────────┐
+│  Service Worker                 │
+│  - Workbook Storage (local)     │
+│  - Tab Management Logic         │
+└─────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────┐
+│  Sheets API                     │
+│  - getSheetTabs()               │
+│  - ensureWeeklyTab()            │
+│  - appendRowsToTab()            │
+└─────────────────────────────────┘
+```
+
+---
+
+## 📁 Files to Modify
+
+| File | Changes |
+|------|---------|
+| `background/service_worker.js` | Add workbook & tab management handlers |
+| `background/sheets_api.js` | Add `ensureWeeklyTab()` and `getSheetTabs()` functions |
+| `popup/popup.html` | Add Workbook Manager UI section |
+| `popup/popup.css` | Add styles for workbook manager |
+| `popup/popup.js` | Add workbook CRUD and tab selection logic |
+
+---
+
+## 🔧 Task 6.1: Update Sheets API Module
+
+**Status:** ✅ Complete  
+**Dependencies:** None (foundational task)  
+**Estimated Time:** 15-20 minutes
+
+### Objective
+Add new functions to `background/sheets_api.js` for workbook and tab management with smart date-based tab creation.
+
+### Files to Modify
+- `background/sheets_api.js` (add new functions at the end)
+
+### Step-by-Step Instructions
+
+**Step 1: Check for existing functions**
+
+**⚠️ CRITICAL FIRST STEP - DO THIS BEFORE ANY CODE ADDITIONS:**
+
+**Agent Prompt:**
+```
+BEFORE adding any code to background/sheets_api.js, check what already exists:
+
+1. Check if getSheetTabs() exists:
+   - Search: "export.*function getSheetTabs"
+   - ✅ ALREADY EXISTS (confirmed in codebase)
+
+2. Check if createTab() or addTabToSheet() exists:
+   - Search: "export.*function.*Tab"
+   - ✅ addTabToSheet() ALREADY EXISTS (can reuse or create alias)
+
+3. Check if appendRows accepts tabName parameter:
+   - ✅ ALREADY EXISTS - appendRows(spreadsheetId, rows, deduplicate, tabName) accepts tabName
+
+4. Check for appendRowsToTab():
+   - If it exists, reuse it
+   - If not, create it (or use appendRows with tabName)
+
+STRATEGY:
+- Reuse existing functions where possible
+- Create new functions only if they don't exist or need different functionality
+- ensureWeeklyTab() is NEW - must be created
+- validateSpreadsheet() is NEW - must be created
+- writeHeadersToTab() is NEW - must be created (or can use appendRows with tabName)
+```
+
+**VERIFIED EXISTING FUNCTIONS:**
+- ✅ `getSheetTabs(spreadsheetId)` - ALREADY EXISTS (line 286)
+- ✅ `addTabToSheet(spreadsheetId, tabName)` - ALREADY EXISTS (line 205)
+- ✅ `appendRows(..., tabName)` - ALREADY ACCEPTS tabName parameter
+
+**FUNCTIONS TO CREATE:**
+- ❌ `ensureWeeklyTab(spreadsheetId)` - NEW
+- ❌ `validateSpreadsheet(spreadsheetId)` - NEW  
+- ❌ `writeHeadersToTab(spreadsheetId, tabName)` - NEW (or reuse appendRows)
+- ❌ `appendRowsToTab(spreadsheetId, tabName, rows)` - NEW (or reuse appendRows)
+- ❌ `getTodayTabName()` - NEW (helper function, not exported)
+
+**Step 2: Read existing code patterns**
+
+**Agent Prompt:**
+```
+Read background/sheets_api.js to understand:
+- How fetchWithRetry is implemented
+- How HEADERS_ROW is defined (currently has 12 columns)
+- Existing tab-related functions and their signatures
+- Error handling patterns
+- How existing appendRows function works
+```
+
+**Step 3: Add missing functions**
+
+**Agent Prompt (Copy This):**
+```
+Add these new functions to the END of background/sheets_api.js:
+
+REQUIREMENTS:
+1. All functions must use existing fetchWithRetry pattern (via apiCall helper)
+2. All functions must log with [SHEETS] prefix
+3. Error handling must match existing patterns
+4. Tab naming: MM_DD_YY format (e.g., "11_27_25")
+5. HEADERS_ROW has 12 columns - account for this in range calculations
+
+Functions to CHECK FIRST (may already exist):
+- getSheetTabs() - Check if already exists
+- createTab() or addTabToSheet() - Check if already exists
+
+Functions to ADD (if missing):
+- getTodayTabName() - Helper to format date as MM_DD_YY (private function, not exported)
+- writeHeadersToTab(spreadsheetId, tabName) - Write headers to specific tab
+- appendRowsToTab(spreadsheetId, tabName, rows) - Append to specific tab
+- ensureWeeklyTab(spreadsheetId) - Smart: create if missing, return tab name
+- validateSpreadsheet(spreadsheetId) - Check if sheet is accessible
+
+IMPORTANT: 
+- Use existing HEADERS_ROW constant (12 columns = A to L)
+- For range calculations: Use A1:L1 (not A1:F1) for headers
+- Check existing functions before duplicating
+- Export all new functions that need to be used elsewhere
+```
+
+### Expected Code Output
+
+**Add this code to the END of `background/sheets_api.js` (after existing functions):**
+
+```javascript
+// ============================================================
+// PHASE 6: WORKBOOK & TAB MANAGEMENT
+// ============================================================
+
+/**
+ * Get today's date formatted as MM_DD_YY
+ * @returns {string} e.g., "11_27_25"
+ */
+function getTodayTabName() {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const year = String(now.getFullYear()).slice(-2);
+    return `${month}_${day}_${year}`;
+}
+
+/**
+ * Format a tab name for use in a range string
+ * Wraps tab names with spaces or special characters in single quotes
+ * @param {string} tabName - The tab name
+ * @returns {string} Formatted tab name for use in ranges
+ */
+function formatTabNameForRange(tabName) {
+    // If tab name contains spaces, single quotes, or special characters, wrap it in single quotes
+    // Escape single quotes in the tab name by doubling them
+    if (tabName.includes(' ') || tabName.includes("'") || tabName.includes('!') || tabName.includes('[')) {
+        return `'${tabName.replace(/'/g, "''")}'`;
+    }
+    return tabName;
+}
+
+/**
+ * Create a new tab in a workbook (without headers)
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tabName - Name for the new tab
+ * @returns {Promise<{sheetId: number, title: string}>}
+ */
+export async function createTab(spreadsheetId, tabName) {
+    console.log(`[SHEETS] Creating tab "${tabName}" in ${spreadsheetId.substring(0, 10)}...`);
+    
+    const result = await apiCall(`/${spreadsheetId}:batchUpdate`, {
+        method: 'POST',
+        body: JSON.stringify({
+            requests: [{
+                addSheet: {
+                    properties: {
+                        title: tabName
+                    }
+                }
+            }]
+        })
+    });
+    
+    const newSheet = result.replies?.[0]?.addSheet?.properties;
+    console.log(`[SHEETS] Created tab: ${newSheet?.title} (ID: ${newSheet?.sheetId})`);
+    
+    return {
+        sheetId: newSheet?.sheetId,
+        title: newSheet?.title
+    };
+}
+
+/**
+ * Write headers to a specific tab
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tabName - The tab to write to
+ * @returns {Promise<void>}
+ */
+export async function writeHeadersToTab(spreadsheetId, tabName) {
+    console.log(`[SHEETS] Writing headers to "${tabName}"...`);
+    
+    // HEADERS_ROW has 12 columns, so use A1:L1
+    const lastColumn = String.fromCharCode(64 + HEADERS_ROW.length); // L for 12 columns
+    const formattedTabName = formatTabNameForRange(tabName);
+    const range = `${formattedTabName}!A1:${lastColumn}1`;
+    
+    await apiCall(
+        `/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+        {
+            method: 'PUT',
+            body: JSON.stringify({
+                values: [HEADERS_ROW]
+            })
+        }
+    );
+    
+    console.log(`[SHEETS] Headers written to "${tabName}"`);
+}
+
+/**
+ * Append rows to a SPECIFIC TAB in a workbook
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tabName - The tab to append to
+ * @param {Array<Array>} rows - Data rows
+ * @returns {Promise<object>}
+ */
+export async function appendRowsToTab(spreadsheetId, tabName, rows) {
+    if (!rows || rows.length === 0) {
+        console.log('[SHEETS] No rows to append, skipping');
+        return null;
+    }
+    
+    console.log(`[SHEETS] Appending ${rows.length} rows to "${tabName}"...`);
+    
+    const formattedTabName = formatTabNameForRange(tabName);
+    const range = `${formattedTabName}!A1`;
+    
+    const result = await apiCall(
+        `/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+        {
+            method: 'POST',
+            body: JSON.stringify({ values: rows })
+        }
+    );
+    
+    console.log(`[SHEETS] Appended ${rows.length} rows to "${tabName}"`);
+    return result;
+}
+
+/**
+ * SMART TAB CREATION: Ensures today's dated tab exists
+ * Creates it with headers if it doesn't exist
+ * 
+ * @param {string} spreadsheetId - The workbook ID
+ * @returns {Promise<{tabName: string, isNew: boolean, spreadsheetId: string}>}
+ */
+export async function ensureWeeklyTab(spreadsheetId) {
+    const tabName = getTodayTabName();
+    console.log(`[SHEETS] Ensuring weekly tab "${tabName}" exists...`);
+    
+    // Get existing tabs (returns Array<{title: string, sheetId: number}>)
+    const existingTabsData = await getSheetTabs(spreadsheetId);
+    const existingTabNames = existingTabsData.map(tab => tab.title);
+    
+    // Check if today's tab already exists
+    if (existingTabNames.includes(tabName)) {
+        console.log(`[SHEETS] Tab "${tabName}" already exists, reusing`);
+        return {
+            tabName,
+            isNew: false,
+            spreadsheetId
+        };
+    }
+    
+    // Create new tab
+    console.log(`[SHEETS] Tab "${tabName}" not found, creating...`);
+    await createTab(spreadsheetId, tabName);
+    
+    // Write headers to the new tab
+    await writeHeadersToTab(spreadsheetId, tabName);
+    
+    console.log(`[SHEETS] ✅ Weekly tab "${tabName}" ready`);
+    return {
+        tabName,
+        isNew: true,
+        spreadsheetId
+    };
+}
+
+/**
+ * Validate that a spreadsheet ID is accessible
+ * @param {string} spreadsheetId - The workbook ID to validate
+ * @returns {Promise<{valid: boolean, title: string, error?: string}>}
+ */
+export async function validateSpreadsheet(spreadsheetId) {
+    try {
+        console.log(`[SHEETS] Validating spreadsheet ${spreadsheetId.substring(0, 10)}...`);
+        
+        const data = await apiCall(`/${spreadsheetId}?fields=properties.title`);
+        
+        return {
+            valid: true,
+            title: data.properties?.title || 'Untitled'
+        };
+    } catch (error) {
+        console.error(`[SHEETS] Validation failed:`, error.message);
+        return {
+            valid: false,
+            title: '',
+            error: error.message
+        };
+    }
+}
+```
+
+### Verification Steps
+
+After adding the code:
+
+1. **Syntax Check:**
+   ```bash
+   # Check for syntax errors (if you have a linter configured)
+   # Or simply reload extension and check console
+   ```
+
+2. **Manual Verification:**
+   - Open Chrome DevTools → Extension Service Worker
+   - Check console for syntax errors
+   - Should see no errors on extension load
+
+3. **Function Availability Check:**
+   - In service worker console, try:
+   ```javascript
+   // Should not error (if imports work)
+   console.log(typeof getTodayTabName);
+   ```
+
+### 🧪 Gate Check 6.1
+```
+✅ No syntax errors in background/sheets_api.js
+✅ All 7 new functions added
+✅ Functions use existing patterns (fetchWithRetry, logging)
+✅ HEADERS_ROW constant referenced correctly
+✅ Tab naming format matches MM_DD_YY pattern
+```
+
+**If gate check passes:** Proceed to Task 6.2  
+**If gate check fails:** Fix errors before continuing
+
+---
+
+## 🔧 Task 6.2: Update Service Worker
+
+**Status:** ✅ Complete  
+**Dependencies:** Task 6.1 must be complete  
+**Estimated Time:** 20-25 minutes
+
+### Objective
+Add workbook management logic to service worker, including storage, message handlers, and state tracking.
+
+### Files to Modify
+- `background/service_worker.js` (update imports, add handlers, add state)
+
+### Step-by-Step Instructions
+
+**Step 1: Update imports**
+
+**Agent Prompt (Copy This):**
+```
+Update the imports section in background/service_worker.js:
+
+CURRENT imports from './sheets_api.js' include:
+- createSheet, appendRows, readSheet, getSheetName, deduplicateSheet, addTabToSheet, loadSheet, getSheetTabs
+
+ADD these new imports:
+- getSheetTabs (might already exist, check first)
+- ensureWeeklyTab
+- appendRowsToTab  
+- validateSpreadsheet
+
+IMPORTANT: Check existing imports first - some functions might already be imported!
+```
+
+**Step 2: Add state variables**
+
+**Agent Prompt:**
+```
+Add new state variables after existing state declarations in service_worker.js:
+
+Add these variables:
+- currentActiveTab (string, default: null) - tracks MM_DD_YY tab name
+- savedWorkbooks (array, default: []) - stores {id, name, sheetTitle, lastUsed, lastTab, addedAt}
+
+Initialize savedWorkbooks from chrome.storage.local on startup.
+```
+
+### Expected Code Output
+
+**Step 1: Update imports at the top of `service_worker.js`:**
+
+**⚠️ CRITICAL:** 
+1. **Read the existing import section FIRST**
+2. Check if `getSheetTabs` is already imported (it might be from existing tab management)
+3. Only add imports that don't already exist
+4. Keep existing imports, just add new ones to the list
+
+**Example of checking first:**
+```
+Read background/service_worker.js
+Find the import statement from './sheets_api.js'
+Check what's already imported
+Add only missing imports
+```
+
+```javascript
+import { 
+    getAuthToken, 
+    removeCachedToken 
+} from './auth.js';
+
+import { 
+    createSheet, 
+    appendRows, 
+    readSheet,
+    // PHASE 6: New imports
+    getSheetTabs,
+    ensureWeeklyTab,
+    appendRowsToTab,
+    validateSpreadsheet
+} from './sheets_api.js';
+
+import { 
+    addToQueue, 
+    processQueue, 
+    getQueueStatus, 
+    getFailedRows, 
+    clearFailedRows,
+    retryFailedItems 
+} from './sync_queue.js';
+```
+
+**Step 2: Add state variables after existing state declarations:**
+
+```javascript
+// --- STATE ---
+let currentOutputSheetId = null;
+let isScrapingActive = false;
+let currentSearchIndex = 0;
+
+// PHASE 6: Workbook & Tab State
+let currentActiveTab = null;        // The MM_DD_YY tab name we're writing to
+let savedWorkbooks = [];            // Array of { id, name, lastUsed }
+```
+
+**Step 3: Add new message handlers inside the existing switch statement:**
+
+**⚠️ IMPORTANT:** 
+- Add handlers AFTER existing handlers, BEFORE the `default:` case
+- Keep existing handlers unchanged
+- Use consistent error handling patterns
+
+```javascript
+// ============================================================
+// PHASE 6: WORKBOOK MANAGEMENT
+// ============================================================
+
+case 'GET_SAVED_WORKBOOKS': {
+    const stored = await getFromStorage(['savedWorkbooks']);
+    savedWorkbooks = stored.savedWorkbooks || [];
+    response = { success: true, workbooks: savedWorkbooks };
+    break;
+}
+
+case 'SAVE_WORKBOOK': {
+    const { id, name } = message;
+    
+    // Validate the spreadsheet first
+    const validation = await validateSpreadsheet(id);
+    if (!validation.valid) {
+        response = { success: false, error: validation.error };
+        break;
+    }
+    
+    // Load existing workbooks
+    const existingData = await getFromStorage(['savedWorkbooks']);
+    savedWorkbooks = existingData.savedWorkbooks || [];
+    
+    // Check if already saved
+    const existingIndex = savedWorkbooks.findIndex(w => w.id === id);
+    
+    const workbookEntry = {
+        id,
+        name: name || validation.title,
+        sheetTitle: validation.title,
+        lastUsed: new Date().toISOString(),
+        addedAt: existingIndex >= 0 
+            ? savedWorkbooks[existingIndex].addedAt 
+            : new Date().toISOString()
+    };
+    
+    if (existingIndex >= 0) {
+        // Update existing
+        savedWorkbooks[existingIndex] = workbookEntry;
+    } else {
+        // Add new
+        savedWorkbooks.push(workbookEntry);
+    }
+    
+    await saveToStorage({ savedWorkbooks });
+    console.log(`[SW] Saved workbook: ${name} (${id.substring(0, 10)}...)`);
+    
+    response = { success: true, workbook: workbookEntry };
+    break;
+}
+
+case 'DELETE_WORKBOOK': {
+    const { id } = message;
+    
+    const existingData = await getFromStorage(['savedWorkbooks']);
+    savedWorkbooks = existingData.savedWorkbooks || [];
+    
+    savedWorkbooks = savedWorkbooks.filter(w => w.id !== id);
+    
+    await saveToStorage({ savedWorkbooks });
+    console.log(`[SW] Deleted workbook: ${id.substring(0, 10)}...`);
+    
+    response = { success: true, workbooks: savedWorkbooks };
+    break;
+}
+
+case 'VALIDATE_SPREADSHEET': {
+    const validation = await validateSpreadsheet(message.spreadsheetId);
+    response = { success: validation.valid, ...validation };
+    break;
+}
+
+case 'ENSURE_WEEKLY_TAB': {
+    const result = await ensureWeeklyTab(message.spreadsheetId);
+    
+    // Set this as the active output
+    currentOutputSheetId = result.spreadsheetId;
+    currentActiveTab = result.tabName;
+    
+    // Update last used
+    const stored = await getFromStorage(['savedWorkbooks']);
+    savedWorkbooks = stored.savedWorkbooks || [];
+    const wbIndex = savedWorkbooks.findIndex(w => w.id === result.spreadsheetId);
+    if (wbIndex >= 0) {
+        savedWorkbooks[wbIndex].lastUsed = new Date().toISOString();
+        savedWorkbooks[wbIndex].lastTab = result.tabName;
+        await saveToStorage({ savedWorkbooks });
+    }
+    
+    await saveToStorage({ 
+        outputSheetId: result.spreadsheetId,
+        activeTab: result.tabName 
+    });
+    
+    response = { success: true, ...result };
+    break;
+}
+
+case 'GET_SHEET_TABS': {
+    const tabs = await getSheetTabs(message.spreadsheetId);
+    response = { success: true, tabs };
+    break;
+}
+
+case 'SET_ACTIVE_TAB': {
+    currentActiveTab = message.tabName;
+    currentOutputSheetId = message.spreadsheetId;
+    await saveToStorage({ 
+        activeTab: message.tabName,
+        outputSheetId: message.spreadsheetId
+    });
+    response = { success: true };
+    break;
+}
+
+case 'GET_ACTIVE_OUTPUT': {
+    response = { 
+        success: true, 
+        spreadsheetId: currentOutputSheetId,
+        tabName: currentActiveTab
+    };
+    break;
+}
+```
+
+**Step 4: Update existing DATA_SCRAPED handler:**
+
+**⚠️ CRITICAL:** Modify the EXISTING `DATA_SCRAPED` case, don't duplicate it!
+
+**Find this existing code:**
+```javascript
+case 'DATA_SCRAPED': {
+    if (currentOutputSheetId && message.rows && message.rows.length > 0) {
+        await addToQueue(message.rows, currentOutputSheetId, currentTabName);
+        // ... existing code ...
+    }
+    break;
+}
+```
+
+**Update to use currentActiveTab instead of currentTabName (if it exists):**
+```javascript
+case 'DATA_SCRAPED': {
+    if (currentOutputSheetId && message.rows && message.rows.length > 0) {
+        // PHASE 6: Use currentActiveTab (weekly tab) or fall back to currentTabName (manual selection)
+        const tabName = currentActiveTab || currentTabName || 'Sheet1';
+        await addToQueue(message.rows, currentOutputSheetId, tabName);
+        console.log(`[SW] Queued page ${message.pageNumber}: ${message.rows.length} rows → ${tabName}`);
+    }
+    break;
+}
+```
+
+### Verification Steps
+
+1. **Syntax Check:**
+   - Reload extension
+   - Check service worker console for errors
+
+2. **Import Verification:**
+   - Verify all new functions are imported
+   - Check for duplicate imports
+
+3. **State Initialization:**
+   - Check that savedWorkbooks loads from storage on startup
+   - Verify currentActiveTab initializes to null
+
+### 🧪 Gate Check 6.2
+```
+✅ No syntax errors in background/service_worker.js
+✅ All new imports added (no duplicates)
+✅ State variables added and initialized
+✅ All 8 new message handlers added
+✅ DATA_SCRAPED handler updated (not duplicated)
+✅ Saved workbooks persist in chrome.storage.local
+```
+
+**If gate check passes:** Proceed to Task 6.3  
+**If gate check fails:** Fix errors before continuing
+
+---
+
+## 🔧 Task 6.3: Update Sync Queue for Tab Support
+
+**Status:** ✅ Complete  
+**Dependencies:** Task 6.1 must be complete (need appendRowsToTab function)  
+**Estimated Time:** 10-15 minutes
+
+### Objective
+Update sync queue to support tab-specific appending while maintaining backward compatibility.
+
+### Files to Modify
+- `background/sync_queue.js` (update addToQueue and processQueue functions)
+
+### Step-by-Step Instructions
+
+**Step 1: Update imports**
+
+**Agent Prompt:**
+```
+Update imports in background/sync_queue.js:
+
+CURRENT: import { appendRows } from './sheets_api.js';
+
+CHANGE TO: import { appendRows, appendRowsToTab } from './sheets_api.js';
+
+This enables tab-specific appending.
+```
+
+**Step 2: Update addToQueue function signature**
+
+**Agent Prompt:**
+```
+Modify the addToQueue function in sync_queue.js:
+
+CURRENT signature likely has: addToQueue(rows, spreadsheetId, tabName = 'Sheet1')
+
+UPDATE to:
+- Accept tabName as optional third parameter
+- Default to null (not 'Sheet1') - we'll use null to indicate "use default tab"
+- Store tabName in queue item
+
+MAINTAIN backward compatibility - existing calls without tabName should still work.
+```
+
+**Step 3: Update processQueue to use tab-specific append**
+
+**Agent Prompt:**
+```
+Update processQueue function in sync_queue.js:
+
+In the sync loop where appendRows is called:
+
+CURRENT: await appendRows(item.spreadsheetId, item.rows);
+
+CHANGE TO:
+- If item.tabName exists, use appendRowsToTab(item.spreadsheetId, item.tabName, item.rows)
+- Otherwise, use appendRows(item.spreadsheetId, item.rows) for backward compatibility
+
+Maintain all existing error handling and retry logic.
+```
+
+### Expected Code Output
+
+**Step 1: Update imports:**
+
+```javascript
+/**
+ * Add rows to the sync queue (LOCAL FIRST - data is safe immediately)
+ * @param {Array<Array>} rows - Data rows to sync
+ * @param {string} spreadsheetId - Target spreadsheet
+ * @param {string} [tabName] - Optional: specific tab to append to (for weekly runs)
+ * @returns {Promise<void>}
+ */
+export async function addToQueue(rows, spreadsheetId, tabName = null) {
+    if (!rows || rows.length === 0) return;
+    
+    const queue = await getQueue();
+    
+    const queueItem = {
+        id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+        spreadsheetId,
+        tabName,  // NEW: Track which tab to write to
+        rows,
+        retryCount: 0,
+        createdAt: new Date().toISOString(),
+        lastAttempt: null
+    };
+    
+    queue.push(queueItem);
+    await saveQueue(queue);
+    
+    console.log(`[QUEUE] Added ${rows.length} rows to queue (tab: ${tabName || 'default'}). Queue size: ${queue.length}`);
+    
+    // Trigger immediate processing
+    processQueue();
+}
+```
+
+**Step 2: Verify addToQueue signature (may already support tabName):**
+
+⚠️ **CHECK FIRST:** The current addToQueue may already accept tabName. Verify before modifying.
+
+**If tabName is already supported:**
+- ✅ Skip this step, proceed to Step 3
+
+**If tabName is NOT supported:**
+- Update function signature as shown below
+
+**Step 3: Update processQueue to use tab-specific append:**
+
+```javascript
+// AFTER (with tab support):
+for (const item of queue) {
+    try {
+        // Attempt to sync - use tab-specific if available
+        if (item.tabName) {
+            await appendRowsToTab(item.spreadsheetId, item.tabName, item.rows);
+        } else {
+            // Fallback to default tab for backward compatibility
+            await appendRows(item.spreadsheetId, item.rows);
+        }
+        synced += item.rows.length;
+        console.log(`[QUEUE] ✅ Synced item ${item.id} (${item.rows.length} rows → ${item.tabName || 'Sheet1'})`);
+        
+    } catch (error) {
+        // ... existing error handling (keep unchanged) ...
+    }
+}
+```
+
+### Verification Steps
+
+1. **Syntax Check:**
+   - Reload extension
+   - Check for import errors
+
+2. **Backward Compatibility:**
+   - Verify existing queue items (without tabName) still sync correctly
+   - Test that new queue items (with tabName) use appendRowsToTab
+
+### 🧪 Gate Check 6.3
+```
+✅ appendRowsToTab imported correctly
+✅ addToQueue accepts tabName parameter
+✅ processQueue uses appendRowsToTab when tabName exists
+✅ processQueue falls back to appendRows for backward compatibility
+✅ No breaking changes to existing functionality
+```
+
+**If gate check passes:** Proceed to Task 6.4  
+**If gate check fails:** Fix errors before continuing
+
+---
+
+## 🔧 Task 6.4: Update Popup HTML
+
+**Status:** ✅ Complete  
+**Dependencies:** None (UI-only changes)  
+**Estimated Time:** 15-20 minutes
+
+### Objective
+Add Workbook Manager UI section to popup HTML, including dropdown, forms, and controls.
+
+### Files to Modify
+- `popup/popup.html` (add new section, optionally update existing sections)
+
+### Step-by-Step Instructions
+
+**Step 1: Locate insertion point**
+
+**Agent Prompt:**
+```
+Read popup/popup.html and locate:
+- The "Input Sheet" section (id="inputSheetId" or similar)
+- The "Output Sheet" section (id="outputSheet" or similar)
+
+The Workbook Manager section should be inserted BETWEEN these two sections.
+
+IDENTIFY the exact location by finding the closing tag of Input Sheet section.
+```
+
+**Step 2: Add Workbook Manager HTML**
+
+**Agent Prompt:**
+```
+Add the Workbook Manager section HTML at the identified location in popup/popup.html.
+
+REQUIREMENTS:
+- Place it between Input Sheet and Output Sheet sections
+- All IDs must match exactly as specified (used by popup.js)
+- Preserve existing HTML structure
+- Maintain indentation/formatting consistency
+```
+
+**Step 3: (Optional) Update Output Sheet section**
+
+**Agent Prompt:**
+```
+OPTIONAL: Make the existing "Output Sheet" section collapsible using <details> tag.
+
+This is optional - the original Output Sheet section can remain unchanged if preferred.
+Only modify if you want to de-emphasize it in favor of Workbook Manager.
+
+If making collapsible, wrap the section content in:
+<details>
+    <summary>📤 Create New Sheet (One-time)</summary>
+    <!-- existing content -->
+</details>
+```
+
+### Expected Code Output
+
+**Step 1: Insert Workbook Manager section**
+
+**Add this new section AFTER the Input Sheet section and BEFORE the Output Sheet section:**
+
+⚠️ **LOCATE FIRST:** Find where Input Sheet section ends, then insert:
+
+```html
+<!-- Workbook Manager Section (NEW - Phase 6) -->
+<section class="section workbook-section">
+    <h2>📚 Workbook Manager</h2>
+    
+    <!-- Saved Workbooks Dropdown -->
+    <div class="workbook-selector">
+        <select id="savedWorkbooksSelect" class="workbook-dropdown">
+            <option value="">-- Select a Saved Workbook --</option>
+        </select>
+        <button id="addWorkbookBtn" class="btn btn-small btn-secondary" title="Add new workbook">
+            ➕
+        </button>
+    </div>
+    
+    <!-- Add Workbook Form (hidden by default) -->
+    <div class="add-workbook-form" id="addWorkbookForm" style="display: none;">
+        <input type="text" id="newWorkbookId" placeholder="Google Sheet ID or URL">
+        <input type="text" id="newWorkbookName" placeholder="Friendly name (e.g., Morgan Cirotto)">
+        <div class="form-actions">
+            <button id="saveNewWorkbookBtn" class="btn btn-primary btn-small">Save</button>
+            <button id="cancelAddWorkbookBtn" class="btn btn-secondary btn-small">Cancel</button>
+        </div>
+    </div>
+    
+    <!-- Selected Workbook Info -->
+    <div class="selected-workbook-info" id="selectedWorkbookInfo" style="display: none;">
+        <div class="workbook-details">
+            <a href="#" id="selectedWorkbookName" class="workbook-name link" target="_blank">-</a>
+            <span class="workbook-id" id="selectedWorkbookId">-</span>
+        </div>
+        <div class="active-checkbox-container">
+            <input type="checkbox" id="workbookActiveCheck" class="active-checkbox">
+            <label for="workbookActiveCheck" class="active-label">Active</label>
+        </div>
+        <button id="removeWorkbookBtn" class="btn btn-small btn-danger" title="Remove from saved">
+            🗑️
+        </button>
+    </div>
+    
+    <!-- Active Tab Display (for weekly runs) -->
+    <div class="active-tab-display" id="activeTabDisplay" style="display: none;">
+        <span class="tab-label">Active Tab:</span>
+        <span class="tab-name" id="activeTabName">-</span>
+        <span class="tab-status" id="activeTabStatus"></span>
+    </div>
+</section>
+```
+
+**Step 2: (Optional) Make Output Sheet section collapsible**
+
+**This is OPTIONAL - only do this if you want to de-emphasize the old "Create New Sheet" workflow:**
+
+Find the existing Output Sheet section and wrap it in a details tag:
+
+```html
+<!-- Output Sheet Section (Original - now optional) -->
+<section class="section output-section-legacy" id="legacyOutputSection">
+    <details>
+        <summary>📤 Create New Sheet (One-time)</summary>
+        <div class="input-row" style="margin-top: 10px;">
+            <input type="text" id="newSheetName" placeholder="New sheet name...">
+            <button id="createSheetBtn" class="btn btn-secondary">Create</button>
+        </div>
+        <div class="current-output" id="currentOutput">
+            <span class="label">Active:</span>
+            <span class="value" id="outputSheetDisplay">None</span>
+        </div>
+    </details>
+</section>
+```
+
+### Verification Steps
+
+1. **HTML Validation:**
+   - Check that all IDs are unique
+   - Verify HTML structure is valid (matching tags)
+
+2. **Element IDs Check:**
+   - Ensure all IDs match what popup.js will reference:
+     - `savedWorkbooksSelect`
+     - `addWorkbookBtn`
+     - `addWorkbookForm`
+     - `newWorkbookId`
+     - `newWorkbookName`
+     - `saveNewWorkbookBtn`
+     - `cancelAddWorkbookBtn`
+     - `selectedWorkbookInfo`
+     - `selectedWorkbookName`
+     - `selectedWorkbookId`
+     - `removeWorkbookBtn`
+     - `activeTabDisplay`
+     - `activeTabName`
+     - `activeTabStatus`
+     - `workbookActiveCheck`
+
+3. **Visual Check:**
+   - Open popup in Chrome
+   - Verify new section appears between Input and Output sections
+
+### 🧪 Gate Check 6.4
+```
+✅ HTML syntax is valid (no unclosed tags)
+✅ All required element IDs are present
+✅ Workbook Manager section appears in popup
+✅ Section is positioned between Input and Output sections
+```
+
+**If gate check passes:** Proceed to Task 6.5  
+**If gate check fails:** Fix HTML issues before continuing
+
+---
+
+## 🔧 Task 6.5: Update Popup CSS
+
+**Status:** ✅ Complete  
+**Dependencies:** Task 6.4 must be complete (HTML elements must exist)  
+**Estimated Time:** 10-15 minutes
+
+### Objective
+Add CSS styles for Workbook Manager UI elements, maintaining consistency with existing pirate theme.
+
+### Files to Modify
+- `popup/popup.css` (add new styles at the end)
+
+### Step-by-Step Instructions
+
+**Agent Prompt:**
+```
+Add CSS styles to popup/popup.css for the Workbook Manager section.
+
+REQUIREMENTS:
+- Match existing pirate theme (black/red colors below header)
+- Use consistent spacing and border radius
+- Ensure dropdowns and buttons match existing style patterns
+- Make form inputs consistent with existing input styling
+
+Add styles for:
+- .workbook-section
+- .workbook-selector
+- .workbook-dropdown
+- .add-workbook-form
+- .selected-workbook-info
+- .active-tab-display
+- .helper-text
+- .workbook-dropdown option states
+- .active-checkbox-container
+- .active-checkbox
+- .active-label
+
+IMPORTANT: Add these styles at the END of the CSS file to avoid conflicts.
+```
+
+### Expected Code Output
+
+**Add these styles to the END of `popup/popup.css`:**
+
+```css
+/* ============================================
+   PHASE 6: Workbook Manager Styles
+   ============================================ */
+
+.workbook-section {
+    background: #2a2a2a; /* Dark gray background */
+    border: 1px solid #444; /* Subtle border */
+}
+
+.workbook-selector {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.workbook-dropdown {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid #555;
+    border-radius: 6px;
+    font-size: 13px;
+    background: #1a1a1a; /* Dark input background */
+    color: #f0f0f0; /* Light text */
+    cursor: pointer;
+}
+
+.workbook-dropdown:focus {
+    outline: none;
+    border-color: #dc3545; /* Red focus border */
+    box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.2);
+}
+
+.add-workbook-form {
+    background: #1a1a1a; /* Dark background */
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px dashed #ff4444; /* Red dashed border */
+}
+
+.add-workbook-form input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 12px;
+    margin-bottom: 8px;
+    background: #2a2a2a; /* Dark input background */
+    color: #f0f0f0; /* Light text */
+}
+
+.add-workbook-form input:focus {
+    outline: none;
+    border-color: #dc3545; /* Red focus border */
+}
+
+.form-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.selected-workbook-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #1a1a1a; /* Dark background */
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px solid #444; /* Subtle border */
+}
+
+.workbook-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.workbook-name {
+    font-weight: 600;
+    color: #ff4444; /* Red for name */
+    font-size: 14px;
+}
+
+.workbook-name.link {
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.workbook-name.link:hover {
+    color: #dc3545; /* Darker red on hover */
+    text-decoration: underline;
+}
+
+.workbook-id {
+    font-size: 10px;
+    color: #888; /* Lighter gray */
+    font-family: monospace;
+}
+
+.active-tab-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: #1a3a1a; /* Dark green tint */
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px solid #28a745; /* Green border */
+}
+
+.tab-label {
+    font-size: 12px;
+    color: #44ff44; /* Green text */
+}
+
+.tab-name {
+    font-weight: 700;
+    font-size: 14px;
+    color: #44ff44; /* Green text */
+    font-family: monospace;
+}
+
+.tab-status {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-left: auto;
+}
+
+.tab-status.new {
+    background: #28a745; /* Green background */
+    color: white;
+}
+
+.tab-status.existing {
+    background: #6c757d; /* Gray background */
+    color: white;
+}
+
+.helper-text {
+    font-size: 11px;
+    color: #888; /* Lighter gray */
+    text-align: center;
+    margin: 8px 0 0 0;
+}
+
+/* Legacy output section styling */
+.output-section-legacy {
+    background: #2a2a2a; /* Dark gray background */
+    border: 1px solid #444; /* Subtle border */
+}
+
+.output-section-legacy summary {
+    cursor: pointer;
+    font-weight: 500;
+    color: #ff4444; /* Red for summary */
+    padding: 4px 0;
+}
+
+.output-section-legacy summary:hover {
+    color: #dc3545; /* Darker red on hover */
+}
+
+/* Workbook item in dropdown - colored by recency */
+.workbook-dropdown option.recent {
+    color: #44ff44; /* Green for recent */
+}
+
+.workbook-dropdown option.stale {
+    color: #dc3545; /* Red for stale */
+}
+
+/* Active Checkbox Styles */
+.active-checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 10px;
+}
+
+.active-checkbox {
+    /* Basic styling for checkbox */
+    width: 16px;
+    height: 16px;
+    accent-color: #dc3545; /* Red accent */
+    cursor: pointer;
+}
+
+.active-label {
+    font-size: 12px;
+    color: #f0f0f0;
+    cursor: pointer;
+}
+```
+
+### Verification Steps
+
+1. **CSS Validation:**
+   - Check for syntax errors (missing semicolons, unclosed braces)
+
+2. **Visual Check:**
+   - Reload extension
+   - Open popup
+   - Verify Workbook Manager section is styled correctly
+   - Check dropdown, buttons, and form elements look good
+
+3. **Theme Consistency:**
+   - Verify colors match pirate theme (black/red)
+   - Ensure spacing matches other sections
+
+### 🧪 Gate Check 6.5
+```
+✅ CSS syntax is valid (no errors)
+✅ Workbook Manager section is styled
+✅ Colors match existing pirate theme
+✅ Interactive elements (dropdown, buttons) are styled
+✅ Form inputs match existing input styling
+```
+
+**If gate check passes:** Proceed to Task 6.6  
+**If gate check fails:** Fix CSS issues before continuing
+
+---
+
+## 🔧 Task 6.6: Update Popup JavaScript
+
+**Status:** ✅ Complete  
+**Dependencies:** Tasks 6.4 and 6.5 must be complete (HTML and CSS)  
+**Estimated Time:** 30-40 minutes
+
+### Objective
+Add JavaScript logic for Workbook Manager functionality, including CRUD operations, UI updates, and integration with scraping workflow.
+
+### Files to Modify
+- `popup/popup.js` (add DOM references, state, functions, event listeners)
+
+### Step-by-Step Instructions
+
+**Step 1: Add DOM element references**
+
+**Agent Prompt:**
+```
+Add new DOM element references to the elements object in popup/popup.js.
+
+Find the existing elements object (usually near top of file).
+
+ADD these new properties:
+- savedWorkbooksSelect: document.getElementById('savedWorkbooksSelect')
+- addWorkbookBtn: document.getElementById('addWorkbookBtn')
+- addWorkbookForm: document.getElementById('addWorkbookForm')
+- newWorkbookId: document.getElementById('newWorkbookId')
+- newWorkbookName: document.getElementById('newWorkbookName')
+- saveNewWorkbookBtn: document.getElementById('saveNewWorkbookBtn')
+- cancelAddWorkbookBtn: document.getElementById('cancelAddWorkbookBtn')
+- selectedWorkbookInfo: document.getElementById('selectedWorkbookInfo')
+- selectedWorkbookName: document.getElementById('selectedWorkbookName')
+- selectedWorkbookId: document.getElementById('selectedWorkbookId')
+- removeWorkbookBtn: document.getElementById('removeWorkbookBtn')
+- activeTabDisplay: document.getElementById('activeTabDisplay')
+- activeTabName: document.getElementById('activeTabName')
+- activeTabStatus: document.getElementById('activeTabStatus')
+- workbookActiveCheck: document.getElementById('workbookActiveCheck')
+- outputActiveCheck: document.getElementById('outputActiveCheck')
+
+IMPORTANT: Use optional chaining (?.) or check for null if elements might not exist yet.
+```
+
+### Expected Code Output
+
+**Step 1: Update DOM element references**
+
+```javascript
+// --- DOM ELEMENTS ---
+const elements = {
+    // ... existing elements ...
+    
+    // Workbook Manager (Phase 6)
+    savedWorkbooksSelect: document.getElementById('savedWorkbooksSelect'),
+    addWorkbookBtn: document.getElementById('addWorkbookBtn'),
+    addWorkbookForm: document.getElementById('addWorkbookForm'),
+    newWorkbookId: document.getElementById('newWorkbookId'),
+    newWorkbookName: document.getElementById('newWorkbookName'),
+    saveNewWorkbookBtn: document.getElementById('saveNewWorkbookBtn'),
+    cancelAddWorkbookBtn: document.getElementById('cancelAddWorkbookBtn'),
+    selectedWorkbookInfo: document.getElementById('selectedWorkbookInfo'),
+    selectedWorkbookName: document.getElementById('selectedWorkbookName'),
+    selectedWorkbookId: document.getElementById('selectedWorkbookId'),
+    removeWorkbookBtn: document.getElementById('removeWorkbookBtn'),
+    activeTabDisplay: document.getElementById('activeTabDisplay'),
+    activeTabName: document.getElementById('activeTabName'),
+    activeTabStatus: document.getElementById('activeTabStatus'),
+    workbookActiveCheck: document.getElementById('workbookActiveCheck'),
+    outputActiveCheck: document.getElementById('outputActiveCheck')
+};
+```
+
+**Step 2: Add state variables**
+
+**Add these properties to the existing `state` object:**
+
+```javascript
+// --- STATE ---
+let state = {
+    // ... existing state ...
+    
+    // Phase 6: Workbook Manager
+    savedWorkbooks: [],
+    selectedWorkbook: null,
+    activeTabName: null,
+    activeSheetType: null,  // 'workbook' or 'output'
+    activeSheetId: null,
+    activeSheetTab: null
+};
+```
+
+**Step 3: Add Workbook Manager functions**
+
+**Add these functions BEFORE the existing event handler functions (or at the end of the file):**
+
+```javascript
+// ============================================================
+// PHASE 6: WORKBOOK MANAGER FUNCTIONS
+// ============================================================
+
+/**
+ * Load saved workbooks from storage and populate dropdown
+ */
+async function loadSavedWorkbooks() {
+    try {
+        const response = await sendMessage('GET_SAVED_WORKBOOKS');
+        state.savedWorkbooks = response.workbooks || [];
+        renderWorkbooksDropdown();
+        console.log('[POPUP] Loaded', state.savedWorkbooks.length, 'saved workbooks');
+    } catch (e) {
+        console.error('[POPUP] Failed to load workbooks:', e);
+    }
+}
+
+/**
+ * Render workbooks in the dropdown
+ */
+function renderWorkbooksDropdown() {
+    const select = elements.savedWorkbooksSelect;
+    if (!select) return;
+    
+    // Clear existing options (keep the placeholder)
+    select.innerHTML = '<option value="">-- Select a Saved Workbook --</option>';
+    
+    // Add saved workbooks
+    state.savedWorkbooks.forEach(wb => {
+        const option = document.createElement('option');
+        option.value = wb.id;
+        option.textContent = wb.name;
+        
+        // Color-code by recency
+        const lastUsed = new Date(wb.lastUsed);
+        const daysSince = (Date.now() - lastUsed.getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSince > 7) {
+            option.className = 'stale';
+            option.textContent += ` (${Math.floor(daysSince)}d ago)`;
+        }
+        
+        select.appendChild(option);
+    });
+}
+
+/**
+ * Handle workbook selection from dropdown
+ */
+async function handleWorkbookSelect() {
+    if (!elements.savedWorkbooksSelect) return;
+    
+    const selectedId = elements.savedWorkbooksSelect.value;
+    
+    if (!selectedId) {
+        // Nothing selected
+        state.selectedWorkbook = null;
+        if (elements.selectedWorkbookInfo) {
+            elements.selectedWorkbookInfo.style.display = 'none';
+        }
+        if (elements.activeTabDisplay) {
+            elements.activeTabDisplay.style.display = 'none';
+        }
+        if (elements.workbookActiveCheck) {
+            elements.workbookActiveCheck.checked = false;
+        }
+        // Clear active sheet if it was workbook
+        if (state.activeSheetType === 'workbook') {
+            handleActiveSheetChange('output'); // Will uncheck if output not valid
+            state.activeSheetType = null;
+            state.activeSheetId = null;
+            state.activeSheetTab = null;
+        }
+        return;
+    }
+    
+    // Find the workbook
+    const workbook = state.savedWorkbooks.find(w => w.id === selectedId);
+    if (!workbook) return;
+    
+    state.selectedWorkbook = workbook;
+    
+    // Update UI
+    if (elements.selectedWorkbookInfo) {
+        elements.selectedWorkbookInfo.style.display = 'flex';
+    }
+    if (elements.selectedWorkbookName) {
+        elements.selectedWorkbookName.textContent = workbook.name;
+        elements.selectedWorkbookName.href = `https://docs.google.com/spreadsheets/d/${workbook.id}`;
+    }
+    if (elements.selectedWorkbookId) {
+        elements.selectedWorkbookId.textContent = workbook.id.substring(0, 20) + '...';
+    }
+    
+    // Show active sheet checkbox
+    if (elements.workbookActiveCheckbox) {
+        elements.workbookActiveCheckbox.style.display = 'block';
+    }
+    
+    // Check if there's a last used tab
+    if (workbook.lastTab && elements.activeTabDisplay) {
+        elements.activeTabDisplay.style.display = 'flex';
+        if (elements.activeTabName) {
+            elements.activeTabName.textContent = workbook.lastTab;
+        }
+        if (elements.activeTabStatus) {
+            elements.activeTabStatus.textContent = 'Last Used';
+            elements.activeTabStatus.className = 'tab-status existing';
+        }
+    }
+}
+
+/**
+ * Show the add workbook form
+ */
+function showAddWorkbookForm() {
+    if (elements.addWorkbookForm) {
+        elements.addWorkbookForm.style.display = 'block';
+    }
+    if (elements.newWorkbookId) {
+        elements.newWorkbookId.value = '';
+        elements.newWorkbookId.focus();
+    }
+    if (elements.newWorkbookName) {
+        elements.newWorkbookName.value = '';
+    }
+}
+
+/**
+ * Hide the add workbook form
+ */
+function hideAddWorkbookForm() {
+    if (elements.addWorkbookForm) {
+        elements.addWorkbookForm.style.display = 'none';
+    }
+    if (elements.newWorkbookId) {
+        elements.newWorkbookId.value = '';
+    }
+    if (elements.newWorkbookName) {
+        elements.newWorkbookName.value = '';
+    }
+}
+
+/**
+ * Save a new workbook
+ */
+async function handleSaveWorkbook() {
+    let sheetId = elements.newWorkbookId?.value.trim();
+    const name = elements.newWorkbookName?.value.trim();
+    
+    if (!sheetId) {
+        updateStatus('❌ Please enter a Sheet ID or URL');
+        return;
+    }
+    
+    // Extract ID from URL if needed
+    sheetId = extractSheetId(sheetId);
+    
+    updateStatus('🔍 Validating spreadsheet...');
+    
+    try {
+        const response = await sendMessage('SAVE_WORKBOOK', { 
+            id: sheetId, 
+            name: name || null  // Let backend use sheet title if no name provided
+        });
+        
+        if (response.success) {
+            updateStatus(`✅ Saved: ${response.workbook.name}`);
+            hideAddWorkbookForm();
+            await loadSavedWorkbooks();
+            
+            // Auto-select the new workbook
+            if (elements.savedWorkbooksSelect) {
+                elements.savedWorkbooksSelect.value = sheetId;
+            }
+            handleWorkbookSelect();
+        } else {
+            updateStatus(`❌ ${response.error}`);
+        }
+    } catch (e) {
+        updateStatus(`❌ ${e.message}`);
+    }
+}
+
+/**
+ * Remove selected workbook from saved list
+ */
+async function handleRemoveWorkbook() {
+    if (!state.selectedWorkbook) return;
+    
+    const confirmed = confirm(`Remove "${state.selectedWorkbook.name}" from saved workbooks?\n\nThis won't delete the Google Sheet, just removes it from this extension.`);
+    
+    if (!confirmed) return;
+    
+    try {
+        await sendMessage('DELETE_WORKBOOK', { id: state.selectedWorkbook.id });
+        updateStatus(`✅ Removed: ${state.selectedWorkbook.name}`);
+        
+        state.selectedWorkbook = null;
+        if (elements.savedWorkbooksSelect) {
+            elements.savedWorkbooksSelect.value = '';
+        }
+        handleWorkbookSelect();
+        
+        await loadSavedWorkbooks();
+    } catch (e) {
+        updateStatus(`❌ ${e.message}`);
+    }
+}
+
+/**
+ * Handle active sheet checkbox changes (mutually exclusive)
+ */
+function handleActiveSheetChange(sheetType) {
+    // Uncheck the other checkbox
+    if (sheetType === 'workbook') {
+        if (elements.outputActiveCheck) {
+            elements.outputActiveCheck.checked = false;
+        }
+        state.activeSheetType = 'workbook';
+        state.activeSheetId = state.selectedWorkbook?.id || null;
+        state.activeSheetTab = state.selectedWorkbook?.lastTab || null;
+    } else if (sheetType === 'output') {
+        if (elements.workbookActiveCheck) {
+            elements.workbookActiveCheck.checked = false;
+        }
+        state.activeSheetType = 'output';
+        state.activeSheetId = state.outputSheetId || null;
+        state.activeSheetTab = state.currentTabName || 'Sheet1';
+    } else {
+        // Uncheck both
+        if (elements.workbookActiveCheck) {
+            elements.workbookActiveCheck.checked = false;
+        }
+        if (elements.outputActiveCheck) {
+            elements.outputActiveCheck.checked = false;
+        }
+        state.activeSheetType = null;
+        state.activeSheetId = null;
+        state.activeSheetTab = null;
+    }
+    
+    updateActionButtons();
+}
+
+/**
+ * Get the currently active sheet (workbook or output)
+ */
+function getActiveSheet() {
+    if (state.activeSheetType === 'workbook' && state.activeSheetId) {
+        // For workbook, use activeSheetTab if set, otherwise use lastTab from selected workbook
+        // If no tab name yet, that's okay - we'll create the weekly tab when starting scraping
+        let tabName = state.activeSheetTab;
+        if (!tabName && state.selectedWorkbook && state.selectedWorkbook.lastTab) {
+            tabName = state.selectedWorkbook.lastTab;
+        }
+        // Return sheet object even if tabName is null - handleStartScraping will create the tab
+        return {
+            type: 'workbook',
+            spreadsheetId: state.activeSheetId,
+            tabName: tabName // Can be null, will be created when starting
+        };
+    } else if (state.activeSheetType === 'output' && state.activeSheetId) {
+        return {
+            type: 'output',
+            spreadsheetId: state.activeSheetId,
+            tabName: state.currentTabName || 'Sheet1'
+        };
+    }
+    return null;
+}
+```
+
+**Step 4: Update init() function**
+
+**Find the existing `init()` function and add:**
+
+1. Call to `loadSavedWorkbooks()` early in init
+2. Event listeners for all Workbook Manager buttons/dropdowns
+
+**Agent Prompt:**
+```
+Update the init() function in popup/popup.js:
+
+1. After loading settings, add:
+   await loadSavedWorkbooks();
+
+2. In the event listeners section, add:
+   elements.savedWorkbooksSelect?.addEventListener('change', handleWorkbookSelect);
+   elements.addWorkbookBtn?.addEventListener('click', showAddWorkbookForm);
+   elements.cancelAddWorkbookBtn?.addEventListener('click', hideAddWorkbookForm);
+   elements.saveNewWorkbookBtn?.addEventListener('click', handleSaveWorkbook);
+   elements.removeWorkbookBtn?.addEventListener('click', handleRemoveWorkbook);
+   elements.workbookActiveCheck?.addEventListener('change', (e) => {
+       handleActiveSheetChange(e.target.checked ? 'workbook' : null);
+   });
+   elements.outputActiveCheck?.addEventListener('change', (e) => {
+       handleActiveSheetChange(e.target.checked ? 'output' : null);
+   });
+
+IMPORTANT: Use optional chaining (?.) since elements might be null during development.
+```
+
+### Verification Steps
+
+1. **Syntax Check:**
+   - Reload extension
+   - Check popup console for JavaScript errors
+
+2. **Function Availability:**
+   - Open popup
+   - Check browser console for errors
+   - Verify all functions are defined
+
+3. **Integration Check:**
+   - Verify loadSavedWorkbooks() is called on init
+   - Check that event listeners are attached
+
+### 🧪 Gate Check 6.6
+```
+✅ No JavaScript errors in popup console
+✅ All Workbook Manager functions are defined
+✅ Event listeners are attached in init()
+✅ loadSavedWorkbooks() is called on initialization
+✅ DOM elements are properly referenced
+✅ Active sheet checkbox system works (mutually exclusive)
+```
+
+**If gate check passes:** Proceed to Integration Testing  
+**If gate check fails:** Fix JavaScript errors before continuing
+
+---
+
+## 🧪 Phase 6 Integration Testing
+
+**Status:** ✅ Complete  
+**Dependencies:** All tasks 6.1-6.6 must be complete  
+**Estimated Time:** 20-30 minutes
+
+### Test Sequence
+
+**Test 1: Workbook Management**
+```bash
+1. Reload extension in Chrome
+2. Open popup
+3. Verify Workbook Manager section appears
+4. Click "+" button
+5. Paste a Google Sheet URL (or ID)
+6. Enter a friendly name (e.g., "Morgan Cirotto")
+7. Click "Save"
+8. ✅ Should validate and appear in dropdown
+9. ✅ Should show workbook info below dropdown
+```
+
+**Test 2: Workbook Selection**
+```bash
+1. Select workbook from dropdown
+2. ✅ Selected workbook info should display
+3. ✅ Checkbox for "Active" should appear
+4. ✅ Helper text should update
+```
+
+**Test 3: Weekly Tab Creation**
+```bash
+1. With workbook selected and checked as active, click "Start Scraping"
+2. ✅ Should show "Setting up weekly tab..." status
+3. ✅ Should create MM_DD_YY tab in Google Sheet (check Sheet manually)
+4. ✅ "Active Tab" should display today's date (e.g., "11_27_25")
+5. ✅ Tab status should show "NEW" if created, "Existing" if reused
+```
+
+**Test 4: Tab Reuse**
+```bash
+1. Click "Start Scraping" again (same day)
+2. ✅ Should NOT create duplicate tab
+3. ✅ Should use existing tab
+4. ✅ Status should show "Existing"
+```
+
+**Test 5: Scraping to Weekly Tab**
+```bash
+1. Navigate to LinkedIn search results page
+2. Select workbook, check as active, and click "Start Scraping"
+3. ✅ Scraping should begin
+4. ✅ Data should go to the MM_DD_YY tab (verify in Google Sheets)
+5. ✅ Queue status should show pending/synced counts
+```
+
+**Test 6: Persistence**
+```bash
+1. Close popup
+2. Reopen popup
+3. ✅ Saved workbooks should still be in dropdown
+4. ✅ Last selected workbook should be remembered (if implemented)
+5. ✅ Last used tab should display
+```
+
+**Test 7: Workbook Removal**
+```bash
+1. Select a workbook
+2. Click trash/remove button
+3. ✅ Should ask for confirmation
+4. ✅ Should remove from dropdown
+5. ✅ Should NOT delete the Google Sheet itself
+```
+
+**Test 8: Active Sheet Checkbox System**
+```bash
+1. Select a workbook and check it as active
+2. ✅ Output sheet checkbox should uncheck automatically
+3. ✅ Start Scraping button should be enabled
+4. Check output sheet as active
+5. ✅ Workbook checkbox should uncheck automatically
+6. ✅ Start Scraping should use output sheet
+```
+
+### Expected Results
+
+| Test | Expected Outcome |
+|------|-----------------|
+| Workbook Save | Validates Sheet ID, saves to storage, appears in dropdown |
+| Workbook Select | Shows workbook info, enables Active checkbox |
+| Weekly Tab Creation | Creates MM_DD_YY tab with headers |
+| Tab Reuse | Uses existing tab, doesn't duplicate |
+| Data Scraping | Data appears in correct dated tab |
+| Persistence | Workbooks saved across popup closes |
+| Workbook Removal | Removes from list, doesn't delete sheet |
+| Active Sheet Selection | Mutually exclusive checkboxes work correctly |
+
+### 🧪 Final Gate Check
+```
+✅ All 8 tests pass
+✅ No console errors
+✅ Data flows correctly: Popup → Service Worker → Sheets API → Google Sheets
+✅ UI updates correctly reflect state changes
+✅ Persistence works (survives popup close/reopen)
+✅ Active sheet checkbox system works (mutually exclusive)
+✅ Automatic daily tab creation works (creates new tab for each day)
+```
+
+**If all tests pass:** Phase 6 is complete! 🎉  
+**If tests fail:** Identify failing test, fix issues, retest
+
+---
+
+## 📊 Weekly Differential Workflow
+
+After Phase 6, your weekly workflow becomes:
+
+```
+WEEK 1 (November 27):
+1. Open LinkedIn search for "Morgan Cirotto - Financial Advisors"
+2. Open extension → Select "Morgan Cirotto" workbook
+3. Check "Active" checkbox
+4. Click "Start Scraping"
+5. Extension creates "11_27_25" tab, scrapes ~500 profiles
+
+WEEK 2 (December 4):
+1. Open same LinkedIn search
+2. Open extension → Select "Morgan Cirotto" workbook
+3. Check "Active" checkbox
+4. Click "Start Scraping"
+5. Extension creates "12_04_25" tab, scrapes ~520 profiles
+
+IN GOOGLE SHEETS:
+1. Open "Morgan Cirotto" workbook
+2. Create "NEW_LEADS" tab
+3. Add formula: =FILTER('12_04_25'!A:F, COUNTIF('11_27_25'!F:F, '12_04_25'!F:F)=0)
+4. This shows all people in Week 2 who weren't in Week 1
+```
+
+---
+
+## ✅ Phase 6 Success Criteria
+
+| Feature | Test |
+|---------|------|
+| Save Workbook | Paste Sheet ID → Give name → Appears in dropdown |
+| Recall Workbook | Close/reopen popup → Workbooks still there |
+| Remove Workbook | Click trash → Removes from dropdown (not from Google) |
+| Weekly Tab Creation | Check active → Click "Start Scraping" → Creates "MM_DD_YY" tab |
+| Tab Detection | Run again same day → Uses existing tab (no duplicate) |
+| Tab-Specific Append | Data goes to the correct dated tab |
+| Last Used Tracking | Shows which tab was last used for each workbook |
+| Active Sheet Selection | Mutually exclusive checkboxes work correctly |
+| Automatic Daily Tabs | New tab created automatically for each new day |
+
+---
+
+## 🔗 Quick Reference: New Message Actions
+
+| Action | Purpose |
+|--------|---------|
+| `GET_SAVED_WORKBOOKS` | Load all saved workbooks |
+| `SAVE_WORKBOOK` | Add/update a workbook (validates first) |
+| `DELETE_WORKBOOK` | Remove from saved list |
+| `VALIDATE_SPREADSHEET` | Check if Sheet ID is accessible |
+| `ENSURE_WEEKLY_TAB` | Create/get today's dated tab |
+| `GET_SHEET_TABS` | List all tabs in a workbook |
+| `SET_ACTIVE_TAB` | Set which tab data appends to |
+| `GET_ACTIVE_OUTPUT` | Get current spreadsheet + tab |
+
+---
+
+## 📝 Execution Notes for Agent
+
+### ⚠️ CRITICAL: Existing Functions Checklist
+
+**BEFORE starting Task 6.1, verify what already exists:**
+
+| Function | Status | Action |
+|----------|--------|--------|
+| `getSheetTabs(spreadsheetId)` | ✅ EXISTS (line 286) | Import and reuse, don't recreate |
+| `addTabToSheet(spreadsheetId, tabName)` | ✅ EXISTS (line 205) | Can reuse or create alias `createTab()` |
+| `appendRows(..., tabName)` | ✅ EXISTS (line 105) | Already supports tabName parameter |
+| `ensureWeeklyTab(spreadsheetId)` | ❌ NEW | Must create |
+| `validateSpreadsheet(spreadsheetId)` | ❌ NEW | Must create |
+| `writeHeadersToTab(spreadsheetId, tabName)` | ❌ NEW | Must create (or reuse appendRows) |
+| `appendRowsToTab(spreadsheetId, tabName, rows)` | ⚠️ OPTIONAL | Can reuse appendRows() or create wrapper |
+
+### Common Pitfalls to Avoid
+
+1. **Duplicate Function Definitions**
+   - ✅ `getSheetTabs()` already exists - IMPORT it, don't recreate
+   - ✅ `addTabToSheet()` exists - Can reuse for createTab functionality
+   - ✅ `appendRows()` already accepts `tabName` - Can reuse instead of creating `appendRowsToTab()`
+   - Read existing code first, then add only what's missing
+
+2. **Import Conflicts**
+   - `getSheetTabs` already imported in service_worker.js (line 4)
+   - Add only NEW imports: `ensureWeeklyTab`, `validateSpreadsheet`
+   - Consider reusing `addTabToSheet` instead of creating `createTab`
+
+3. **State Variable Conflicts**
+   - `currentTabName` already exists in service_worker.js (line 16)
+   - Add `currentActiveTab` for weekly tab tracking
+   - Add `savedWorkbooks` array for workbook persistence
+   - Don't shadow existing variables
+
+4. **HTML Element ID Conflicts**
+   - All new IDs must be unique
+   - Check popup.html for existing IDs before adding
+   - Existing IDs: `tabSelector`, `currentTabDisplay` - don't conflict
+
+5. **Breaking Existing Functionality**
+   - Keep all existing message handlers
+   - Don't remove or rename existing functions
+   - Add new functionality alongside existing code
+   - Existing tab management (manual selection) should still work
+
+### File Modification Strategy
+
+**For each file:**
+1. Read the entire file first to understand context
+2. Identify insertion points (usually at the end for new functions)
+3. Check for existing similar functions to avoid duplication
+4. Make minimal, focused changes
+5. Test after each change (reload extension)
+6. Verify no breaking changes (existing features still work)
+
+### Testing Strategy
+
+After each task:
+1. Reload extension in Chrome (`chrome://extensions` → reload icon)
+2. Check service worker console for errors (click "service worker" link)
+3. Check popup console for errors (right-click popup → Inspect)
+4. Verify functionality manually
+5. Only proceed if gate check passes
+
+### Code Reuse Opportunities
+
+**Instead of creating new functions, consider:**
+- `createTab()` → Reuse existing `addTabToSheet()` (they do the same thing)
+- `appendRowsToTab()` → Reuse existing `appendRows()` with `tabName` parameter
+- This reduces code duplication and maintenance burden
+
+### HEADERS_ROW Column Count
+
+**Important:** HEADERS_ROW has **12 columns**, not 6:
+- Date, Name, Title, Location, Connection Source, LinkedIn URL (6 base)
+- Accreditation 1-6 (6 more)
+- **Total: 12 columns (A through L)**
+
+When calculating ranges, use `A1:L1` not `A1:F1`.
+
+### Tab Name Formatting
+
+**Important:** Tab names with spaces or special characters must be quoted in range strings:
+- Use `formatTabNameForRange()` helper function
+- Example: `new tab` becomes `'new tab'` in range strings
+- Single quotes in tab names are escaped by doubling: `O'Malley's` becomes `'O''Malley''s'`
+
+---
+
+## 🎯 Success Criteria Summary
+
+Phase 6 is complete when:
+- ✅ Workbook Manager UI appears in popup
+- ✅ Can save/load/remove workbooks (persists across sessions)
+- ✅ Active sheet checkbox system works (mutually exclusive)
+- ✅ "Start Scraping" creates MM_DD_YY tab automatically when workbook is active
+- ✅ Data scrapes to the dated tab (not default Sheet1)
+- ✅ Existing tab management functionality still works
+- ✅ Existing "Create Sheet" and "Load Sheet" still work
+- ✅ No console errors in service worker or popup
+- ✅ All gate checks pass
+- ✅ Weekly tabs are created with correct date format
+- ✅ Tab reuse works (same day = uses existing tab)
+- ✅ Automatic daily tab creation (new tab for each new day)
+
+---
+
+## 🚀 PHASE 7: Tab Comparison & Differential List Feature
+
+## 🎯 Objective
+
+Add a "Compare Tabs" feature that allows users to:
+1. Select two tabs from the active workbook via dropdowns
+2. Generate a differential list (entries that exist in one tab but not the other)
+3. Create a new custom-named tab containing the differential results
+
+**Use Case Example:**
+- User has tabs `11_27_25` and `11_28_25` with scraped LinkedIn contacts
+- User selects both tabs, clicks "Compare"
+- User names the output tab `new_leads`
+- System creates `new_leads` tab containing contacts that are in `11_28_25` but NOT in `11_27_25`
+
+---
+
+## 📋 Pre-Implementation Checklist
+
+> ⚠️ **STOP**: Verify these before starting any code generation.
+
+```
+✅ Phase 6 (Workbook Manager) is complete and working
+✅ Active sheet is selected in the Workbook Manager
+✅ Extension can read tabs from workbooks (GET_SHEET_TABS works)
+✅ Extension can read data from specific tabs (readSheet with tab range works)
+✅ Extension can create new tabs with headers (addTabToSheet works)
+```
+
+---
+
+## 🏗️ Architecture Overview
+
+### New Components
+
+```
+sheets_api.js
+├── compareTabs()           # NEW: Compare two tabs, return differential
+└── getTabData()            # NEW: Helper to read all data from a tab
+
+service_worker.js
+├── COMPARE_TABS            # NEW: Message handler for comparison
+└── GET_TAB_DATA            # NEW: Message handler for reading tab data
+
+popup.html
+└── Compare Tabs Section    # NEW: UI section with dropdowns and button
+
+popup.js
+├── loadTabsForComparison() # NEW: Populate tab dropdowns
+├── handleCompare()         # NEW: Execute comparison workflow
+└── renderCompareUI()       # NEW: Update comparison UI state
+
+popup.css
+└── .compare-section        # NEW: Styling for comparison UI
+```
+
+### Data Flow
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────────┐     ┌──────────────┐
+│  Popup.js   │ ──► │ Service      │ ──► │ Sheets API      │ ──► │ Google Sheet │
+│ (Compare UI)│     │ Worker       │     │ compareTabs()   │     │              │
+└─────────────┘     └──────────────┘     └─────────────────┘     └──────────────┘
+       │                   │                      │
+       │ 1. Select tabs    │ 2. COMPARE_TABS     │ 3. Read both tabs
+       │ 4. Name output    │    message          │ 4. Compute diff
+       ▼                   ▼                      │ 5. Create new tab
+  Show results        Return diff stats          │ 6. Write diff rows
+                                                 ▼
+                                            New tab created
+```
+
+---
+
+## 🔧 Task 7.1: Add Comparison Functions to sheets_api.js
+
+**Status:** 🔲 Not Started  
+**Dependencies:** None (builds on existing sheets_api.js)  
+**Estimated Time:** 20-25 minutes
+
+### Objective
+Add functions to compare two tabs and identify the differential based on a key column (Name or LinkedIn URL).
+
+### Files to Modify
+- `background/sheets_api.js`
+
+### Step-by-Step Instructions
+
+**Step 1: Add getTabData helper function**
+
+**Agent Prompt:**
+```
+Add a new helper function getTabData to background/sheets_api.js.
+
+This function should:
+1. Accept spreadsheetId and tabName parameters
+2. Read all data from the specified tab (A:Z range)
+3. Return { headers: Array, rows: Array, rowCount: number }
+4. Handle tab names with spaces using formatTabNameForRange()
+
+Place this function AFTER the existing readSheet function (around line 197).
+
+IMPORTANT NOTES:
+- formatTabNameForRange() is an internal function in this file (not exported) - it's fine to use it directly
+- readSheet() is already exported and available
+- HEADERS_ROW constant is available in this file (12 columns: Date, Name, Title, Location, Connection Source, LinkedIn URL, etc.)
+- Name column is index 1 (column B)
+- LinkedIn URL column is index 5 (column F)
+
+REQUIREMENTS:
+- Use existing formatTabNameForRange helper (internal function, no import needed)
+- Use existing readSheet function internally
+- Return empty arrays if tab has no data
+- Include proper console logging with [SHEETS] prefix
+- Export the function using 'export async function'
+```
+
+**Expected Output:**
+
+```javascript
+/**
+ * Get all data from a specific tab
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tabName - The tab to read from
+ * @returns {Promise<{headers: Array, rows: Array, rowCount: number}>}
+ */
+export async function getTabData(spreadsheetId, tabName) {
+    console.log(`[SHEETS] Getting data from tab "${tabName}"...`);
+    
+    const formattedTabName = formatTabNameForRange(tabName);
+    const allData = await readSheet(spreadsheetId, `${formattedTabName}!A:Z`);
+    
+    if (!allData || allData.length === 0) {
+        console.log(`[SHEETS] Tab "${tabName}" is empty`);
+        return { headers: [], rows: [], rowCount: 0 };
+    }
+    
+    const headers = allData[0] || [];
+    const rows = allData.slice(1);
+    
+    console.log(`[SHEETS] Tab "${tabName}" has ${rows.length} data rows`);
+    return { headers, rows, rowCount: rows.length };
+}
+```
+
+**Step 2: Add compareTabs function**
+
+**Agent Prompt:**
+```
+Add a new function compareTabs to background/sheets_api.js.
+
+This function should:
+1. Accept: spreadsheetId, tab1Name, tab2Name, outputTabName, keyColumn (default: 1 for Name column)
+2. Read data from both tabs using getTabData
+3. Find rows that are in tab2 but NOT in tab1 (new entries)
+4. Check if output tab already exists using getSheetTabs
+5. Create a new tab with the outputTabName (if it doesn't exist)
+6. Write differential rows to the new tab (addTabToSheet already adds headers)
+
+Place this function AFTER getTabData function.
+
+IMPORTANT NOTES:
+- getSheetTabs() is already exported in this file - use it to check for existing tabs
+- addTabToSheet() already adds HEADERS_ROW to new tabs, so don't add headers again
+- appendRows() is used to write the differential rows
+- Column indices: Name = 1 (B), LinkedIn URL = 5 (F)
+- formatTabNameForRange() is internal - use it for tab names with spaces
+
+COMPARISON LOGIC:
+- Use the keyColumn (default: Name column, index 1) to determine uniqueness
+- Normalize comparison: lowercase, trimmed
+- A row is "new" if its key value doesn't exist in tab1
+- Skip rows without a key value
+- Avoid duplicates within tab2 itself
+
+REQUIREMENTS:
+- Use existing getSheetTabs to check if output tab exists
+- Use existing addTabToSheet to create output tab (it adds headers automatically)
+- Use existing appendRows to write data rows only (not headers)
+- Handle edge cases: empty tabs, duplicate keys within same tab, missing output tab name
+- Return success: false if tab already exists
+- Include proper console logging with [SHEETS] prefix
+- Export the function using 'export async function'
+```
+
+**Expected Output:**
+
+```javascript
+/**
+ * Compare two tabs and create a differential list
+ * Finds entries that exist in tab2 but NOT in tab1 (new entries)
+ * 
+ * @param {string} spreadsheetId - The workbook ID
+ * @param {string} tab1Name - The "baseline" tab (older data)
+ * @param {string} tab2Name - The "compare" tab (newer data) 
+ * @param {string} outputTabName - Name for the output tab with differential
+ * @param {number} keyColumn - Column index to use as unique key (default: 1 for Name)
+ * @returns {Promise<{success: boolean, newEntries: number, tab1Count: number, tab2Count: number, outputTabName: string, error?: string}>}
+ */
+export async function compareTabs(spreadsheetId, tab1Name, tab2Name, outputTabName, keyColumn = 1) {
+    console.log(`[SHEETS] Comparing tabs: "${tab1Name}" vs "${tab2Name}" → "${outputTabName}"`);
+    
+    try {
+        // Step 1: Read data from both tabs
+        const tab1Data = await getTabData(spreadsheetId, tab1Name);
+        const tab2Data = await getTabData(spreadsheetId, tab2Name);
+        
+        console.log(`[SHEETS] Tab1 "${tab1Name}": ${tab1Data.rowCount} rows`);
+        console.log(`[SHEETS] Tab2 "${tab2Name}": ${tab2Data.rowCount} rows`);
+        
+        // Step 2: Build a Set of keys from tab1 (baseline)
+        const tab1Keys = new Set();
+        for (const row of tab1Data.rows) {
+            const keyValue = row[keyColumn];
+            if (keyValue) {
+                tab1Keys.add(String(keyValue).toLowerCase().trim());
+            }
+        }
+        console.log(`[SHEETS] Tab1 has ${tab1Keys.size} unique keys`);
+        
+        // Step 3: Find rows in tab2 that are NOT in tab1
+        const newRows = [];
+        const seenInTab2 = new Set(); // Avoid duplicates within tab2
+        
+        for (const row of tab2Data.rows) {
+            const keyValue = row[keyColumn];
+            if (!keyValue) continue; // Skip rows without key
+            
+            const normalizedKey = String(keyValue).toLowerCase().trim();
+            
+            // Check if this key is NOT in tab1 AND we haven't already added it
+            if (!tab1Keys.has(normalizedKey) && !seenInTab2.has(normalizedKey)) {
+                newRows.push(row);
+                seenInTab2.add(normalizedKey);
+            }
+        }
+        
+        console.log(`[SHEETS] Found ${newRows.length} new entries in "${tab2Name}"`);
+        
+        // Step 4: Check if output tab already exists
+        const existingTabs = await getSheetTabs(spreadsheetId);
+        const tabExists = existingTabs.some(t => t.title === outputTabName);
+        
+        if (tabExists) {
+            console.log(`[SHEETS] Tab "${outputTabName}" already exists`);
+            return {
+                success: false,
+                error: `Tab "${outputTabName}" already exists. Please choose a different name.`,
+                newEntries: 0,
+                tab1Count: tab1Data.rowCount,
+                tab2Count: tab2Data.rowCount,
+                outputTabName
+            };
+        }
+        
+        // Step 5: Create new tab (addTabToSheet automatically adds HEADERS_ROW)
+        await addTabToSheet(spreadsheetId, outputTabName);
+        console.log(`[SHEETS] Created output tab: "${outputTabName}"`);
+        
+        // Step 6: Write differential rows (if any)
+        // Note: Headers are already added by addTabToSheet, so we only write data rows
+        if (newRows.length > 0) {
+            await appendRows(spreadsheetId, newRows, false, outputTabName);
+            console.log(`[SHEETS] Wrote ${newRows.length} rows to "${outputTabName}"`);
+        } else {
+            console.log(`[SHEETS] No new entries to write (output tab has headers only)`);
+        }
+        
+        console.log(`[SHEETS] ✅ Comparison complete: ${newRows.length} new entries`);
+        
+        return {
+            success: true,
+            newEntries: newRows.length,
+            tab1Count: tab1Data.rowCount,
+            tab2Count: tab2Data.rowCount,
+            outputTabName
+        };
+        
+    } catch (error) {
+        console.error(`[SHEETS] Compare error:`, error);
+        return {
+            success: false,
+            error: error.message,
+            newEntries: 0,
+            tab1Count: 0,
+            tab2Count: 0,
+            outputTabName
+        };
+    }
+}
+```
+
+**Step 3: Update exports**
+
+**Agent Prompt:**
+```
+Verify that the new functions are exported from sheets_api.js.
+
+The export statement at the function definition should be present:
+- export async function getTabData(...)
+- export async function compareTabs(...)
+
+If using a separate export block at the bottom of the file, add these functions to it.
+
+DO NOT duplicate exports.
+```
+
+### Verification Steps
+
+1. **Syntax Check:**
+   ```bash
+   # In browser console after reload:
+   # Service worker should load without errors
+   ```
+
+2. **Function Availability:**
+   - Check that compareTabs and getTabData are listed in imports
+   - No duplicate function definitions
+
+3. **Console Logging:**
+   - All new log statements use `[SHEETS]` prefix
+
+### 🧪 Gate Check 7.1
+
+```
+✅ getTabData function added and exported
+✅ compareTabs function added and exported  
+✅ formatTabNameForRange is used for tab names with spaces
+✅ Comparison uses normalized keys (lowercase, trimmed)
+✅ Output tab existence check prevents overwriting
+✅ Headers are preserved in output tab
+✅ No syntax errors on extension reload
+```
+
+**If gate check passes:** Proceed to Task 7.2  
+**If gate check fails:** Fix errors before continuing
+
+---
+
+## 🔧 Task 7.2: Add Message Handlers to service_worker.js
+
+**Status:** 🔲 Not Started  
+**Dependencies:** Task 7.1 must be complete  
+**Estimated Time:** 15-20 minutes
+
+### Objective
+Add message handlers to handle tab comparison requests from the popup.
+
+### Files to Modify
+- `background/service_worker.js`
+
+### Step-by-Step Instructions
+
+**Step 1: Update imports**
+
+**Agent Prompt:**
+```
+Update the imports at the top of background/service_worker.js.
+
+FIND the existing import from './sheets_api.js':
+import { createSheet, appendRows, readSheet, deduplicateSheet, getSheetName, addTabToSheet, loadSheet, getSheetTabs, ensureWeeklyTab, appendRowsToTab, validateSpreadsheet } from './sheets_api.js';
+
+ADD the new functions to this import:
+- getTabData
+- compareTabs
+
+RESULT should be:
+import { createSheet, appendRows, readSheet, deduplicateSheet, getSheetName, addTabToSheet, loadSheet, getSheetTabs, ensureWeeklyTab, appendRowsToTab, validateSpreadsheet, getTabData, compareTabs } from './sheets_api.js';
+
+DO NOT create a separate import statement - add to existing one.
+```
+
+**Step 2: Add COMPARE_TABS message handler**
+
+**Agent Prompt:**
+```
+Add a new case 'COMPARE_TABS' to the message handler switch statement in service_worker.js.
+
+LOCATE: The switch statement inside chrome.runtime.onMessage.addListener
+FIND: A good location - suggest adding after 'DEDUPLICATE_SHEET' case or before 'STATUS_UPDATE'
+
+The handler should:
+1. Extract: spreadsheetId, tab1Name, tab2Name, outputTabName, keyColumn from message
+2. Validate required parameters (spreadsheetId, tab1Name, tab2Name, outputTabName)
+3. Call compareTabs() function
+4. Return the result
+
+REQUIREMENTS:
+- Use existing currentOutputSheetId as fallback for spreadsheetId
+- Include proper error handling
+- Log with [SW] prefix
+```
+
+**Expected Output:**
+
+```javascript
+// ============================================================
+// PHASE 7: TAB COMPARISON
+// ============================================================
+
+case 'COMPARE_TABS': {
+    const spreadsheetId = message.spreadsheetId || currentOutputSheetId;
+    const { tab1Name, tab2Name, outputTabName, keyColumn } = message;
+    
+    // Validate required parameters
+    if (!spreadsheetId) {
+        response = { success: false, error: 'No spreadsheet selected' };
+        break;
+    }
+    if (!tab1Name || !tab2Name) {
+        response = { success: false, error: 'Please select two tabs to compare' };
+        break;
+    }
+    if (!outputTabName) {
+        response = { success: false, error: 'Please enter a name for the output tab' };
+        break;
+    }
+    if (tab1Name === tab2Name) {
+        response = { success: false, error: 'Please select two different tabs' };
+        break;
+    }
+    
+    console.log(`[SW] Comparing tabs: "${tab1Name}" vs "${tab2Name}" → "${outputTabName}"`);
+    
+    const result = await compareTabs(
+        spreadsheetId, 
+        tab1Name, 
+        tab2Name, 
+        outputTabName, 
+        keyColumn || 1  // Default to Name column
+    );
+    
+    response = { success: result.success, ...result };
+    break;
+}
+
+case 'GET_TAB_DATA': {
+    const spreadsheetId = message.spreadsheetId || currentOutputSheetId;
+    const { tabName } = message;
+    
+    if (!spreadsheetId) {
+        response = { success: false, error: 'No spreadsheet selected' };
+        break;
+    }
+    if (!tabName) {
+        response = { success: false, error: 'No tab name provided' };
+        break;
+    }
+    
+    const data = await getTabData(spreadsheetId, tabName);
+    response = { success: true, ...data };
+    break;
+}
+```
+
+**Step 3: Verify placement**
+
+**Agent Prompt:**
+```
+Verify the new cases are placed correctly:
+
+1. Inside the switch statement (NOT outside)
+2. Before the 'default:' case
+3. After existing Phase 6 cases (for organization)
+
+Check that the closing braces and 'break' statements are correct.
+Ensure no duplicate case labels exist.
+```
+
+### Verification Steps
+
+1. **Syntax Check:**
+   - Reload extension
+   - Check service worker console for errors
+
+2. **Import Verification:**
+   - Verify compareTabs and getTabData are imported
+   - Check for duplicate imports
+
+3. **Message Handler Test:**
+   ```javascript
+   // In popup console:
+   chrome.runtime.sendMessage({ action: 'COMPARE_TABS' }, console.log);
+   // Should return: { success: false, error: 'No spreadsheet selected' }
+   ```
+
+### 🧪 Gate Check 7.2
+
+```
+✅ compareTabs and getTabData imported (no duplicates)
+✅ COMPARE_TABS case added to switch statement
+✅ GET_TAB_DATA case added to switch statement
+✅ All validation checks present
+✅ Fallback to currentOutputSheetId works
+✅ No syntax errors on extension reload
+✅ Test message returns expected validation error
+```
+
+**If gate check passes:** Proceed to Task 7.3  
+**If gate check fails:** Fix errors before continuing
+
+---
+
+## 🔧 Task 7.3: Add Compare UI to popup.html
+
+**Status:** 🔲 Not Started  
+**Dependencies:** None (UI-only changes)  
+**Estimated Time:** 20-25 minutes
+
+### Objective
+Add a "Compare Tabs" UI section with two dropdown selectors, output tab name input, and compare button.
+
+### Files to Modify
+- `popup/popup.html`
+
+### Step-by-Step Instructions
+
+**Step 1: Locate insertion point**
+
+**Agent Prompt:**
+```
+Read popup/popup.html and locate the insertion point.
+
+The Compare Tabs section should be added:
+- AFTER the Workbook Manager section (ends around line 91 with </section>)
+- BEFORE the Output Sheet section (starts around line 93 with <!-- Output Sheet Section -->)
+
+EXACT LOCATION: After line 91 (closing </section> of Workbook Manager), before line 93.
+
+IDENTIFY: Find the closing </section> tag of the Workbook Manager section (class="section workbook-section").
+
+The Compare section should be its own collapsible section using <details> tag, matching the structure of other sections.
+```
+
+**Step 2: Add Compare Tabs HTML section**
+
+**Agent Prompt:**
+```
+Add the Compare Tabs section HTML at the identified location in popup/popup.html.
+
+REQUIREMENTS:
+- Use <details> tag for collapsible section (matches other sections)
+- Use class="section compare-section" on <details> tag
+- Two <select> dropdowns for tab selection (id="compareTab1", id="compareTab2")
+- Text input for output tab name (id="compareOutputName")
+- Compare button (id="compareBtn")
+- Results display area (id="compareResults")
+- All IDs must match exactly (used by popup.js)
+- Use existing CSS class patterns (.section, .form-group, .btn, etc.)
+- Match indentation style of surrounding sections (4 spaces per level)
+- Place between Workbook Manager (ends ~line 91) and Output Sheet (starts ~line 93)
+```
+
+**Expected Output:**
+
+```html
+<!-- Compare Tabs Section (NEW - Phase 7) -->
+<details class="section compare-section">
+    <summary>🔄 Compare Tabs</summary>
+    <div class="section-content">
+        <p class="section-description" style="font-size: 12px; color: #888; margin-bottom: 12px; font-style: italic;">
+            Find entries that exist in one tab but not the other.
+        </p>
+        
+        <div class="form-group">
+            <label for="compareTab1">Baseline Tab (older):</label>
+            <select id="compareTab1" class="tab-select">
+                <option value="">-- Select Tab --</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="compareTab2">Compare Tab (newer):</label>
+            <select id="compareTab2" class="tab-select">
+                <option value="">-- Select Tab --</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="compareOutputName">Output Tab Name:</label>
+            <input type="text" id="compareOutputName" placeholder="e.g., new_leads" />
+        </div>
+        
+        <div class="form-group">
+            <label for="compareKeyColumn">Compare By:</label>
+            <select id="compareKeyColumn" class="key-select">
+                <option value="1" selected>Name (Column B)</option>
+                <option value="5">LinkedIn URL (Column F)</option>
+            </select>
+        </div>
+        
+        <div class="button-row">
+            <button id="compareBtn" class="btn btn-primary" disabled>
+                🔄 Compare
+            </button>
+            <button id="refreshTabsBtn" class="btn btn-secondary">
+                ↻ Refresh Tabs
+            </button>
+        </div>
+        
+        <div id="compareResults" class="results-box" style="display: none;">
+            <div class="result-item">
+                <span class="result-label">Tab 1 Rows:</span>
+                <span id="compareTab1Count">-</span>
+            </div>
+            <div class="result-item">
+                <span class="result-label">Tab 2 Rows:</span>
+                <span id="compareTab2Count">-</span>
+            </div>
+            <div class="result-item result-highlight">
+                <span class="result-label">New Entries:</span>
+                <span id="compareNewCount">-</span>
+            </div>
+            <div class="result-item">
+                <span class="result-label">Output Tab:</span>
+                <span id="compareOutputTab">-</span>
+            </div>
+        </div>
+        
+        <div id="compareError" class="error-message" style="display: none;"></div>
+    </div>
+</details>
+```
+
+**Step 3: Verify HTML structure**
+
+**Agent Prompt:**
+```
+Verify the HTML structure:
+
+1. All tags are properly closed
+2. IDs are unique within the document
+3. Class names match existing patterns
+4. Indentation is consistent with rest of file
+
+Check there are no duplicate IDs by searching for each ID in the file.
+```
+
+### Verification Steps
+
+1. **HTML Validation:**
+   - Open popup in browser
+   - Check for rendering errors
+   - Verify section is collapsible
+
+2. **Element IDs:**
+   - All specified IDs exist
+   - No duplicate IDs in document
+
+3. **Visual Check:**
+   - Section appears in correct location
+   - Dropdowns render correctly
+   - Button displays properly
+
+### 🧪 Gate Check 7.3
+
+```
+✅ Compare Tabs section added to popup.html
+✅ Section is collapsible (<details> tag)
+✅ Two tab dropdowns present (compareTab1, compareTab2)
+✅ Output name input present (compareOutputName)
+✅ Key column selector present (compareKeyColumn)
+✅ Compare button present and initially disabled
+✅ Refresh tabs button present
+✅ Results display area present
+✅ Error display area present
+✅ No HTML syntax errors
+✅ No duplicate IDs
+```
+
+**If gate check passes:** Proceed to Task 7.4  
+**If gate check fails:** Fix errors before continuing
+
+---
+
+## 🔧 Task 7.4: Add Compare CSS Styling
+
+**Status:** 🔲 Not Started  
+**Dependencies:** Task 7.3 must be complete  
+**Estimated Time:** 10-15 minutes
+
+### Objective
+Add CSS styling for the Compare Tabs section that matches existing pirate theme.
+
+### Files to Modify
+- `popup/popup.css`
+
+### Step-by-Step Instructions
+
+**Step 1: Add compare section styles**
+
+**Agent Prompt:**
+```
+Add CSS styles for the Compare Tabs section to popup/popup.css.
+
+REQUIREMENTS:
+- Match existing pirate theme (black/red color scheme)
+- Style the results box with distinct appearance
+- Style the error message
+- Style the highlight for "New Entries" count
+- Maintain consistency with existing section styles
+
+Add these styles at the END of the file (after existing styles).
+```
+
+**Expected Output:**
+
+```css
+/* ============================================================
+   PHASE 7: COMPARE TABS SECTION
+   ============================================================ */
+
+.compare-section .section-content {
+    padding: 10px 0;
+}
+
+.compare-section .section-description {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 12px;
+    font-style: italic;
+}
+
+.compare-section .tab-select,
+.compare-section .key-select {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background: #1a1a1a;
+    color: #fff;
+    font-size: 13px;
+}
+
+.compare-section .tab-select:focus,
+.compare-section .key-select:focus {
+    border-color: #dc3545;
+    outline: none;
+}
+
+.compare-section .button-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.compare-section .btn-secondary {
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.compare-section .btn-secondary:hover {
+    background: #444;
+}
+
+.results-box {
+    margin-top: 15px;
+    padding: 12px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 6px;
+}
+
+.results-box .result-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #2a2a2a;
+    font-size: 13px;
+}
+
+.results-box .result-item:last-child {
+    border-bottom: none;
+}
+
+.results-box .result-label {
+    color: #888;
+}
+
+.results-box .result-item span:last-child {
+    color: #fff;
+    font-weight: 500;
+}
+
+.results-box .result-highlight {
+    background: rgba(220, 53, 69, 0.15);
+    margin: 4px -12px;
+    padding: 8px 12px;
+    border-radius: 4px;
+}
+
+.results-box .result-highlight .result-label {
+    color: #dc3545;
+    font-weight: 600;
+}
+
+.results-box .result-highlight span:last-child {
+    color: #dc3545;
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.error-message {
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(220, 53, 69, 0.2);
+    border: 1px solid #dc3545;
+    border-radius: 4px;
+    color: #ff6b6b;
+    font-size: 12px;
+}
+
+/* Compare button states */
+.compare-section #compareBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.compare-section #compareBtn.loading {
+    position: relative;
+    color: transparent;
+}
+
+.compare-section #compareBtn.loading::after {
+    content: "⏳";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #fff;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+```
+
+### Verification Steps
+
+1. **CSS Validation:**
+   - Reload extension
+   - Check for CSS syntax errors in console
+
+2. **Visual Check:**
+   - Section styling matches theme
+   - Dropdowns have correct appearance
+   - Results box displays correctly
+
+### 🧪 Gate Check 7.4
+
+```
+✅ CSS added to popup.css
+✅ No CSS syntax errors
+✅ Styling matches existing theme
+✅ Results box styled distinctly
+✅ Error message styled
+✅ Highlight styling for new entries count
+✅ Button states (disabled, loading) styled
+```
+
+**If gate check passes:** Proceed to Task 7.5  
+**If gate check fails:** Fix errors before continuing
+
+---
+
+## 🔧 Task 7.5: Add Compare Logic to popup.js
+
+**Status:** 🔲 Not Started  
+**Dependencies:** Tasks 7.1-7.4 must be complete  
+**Estimated Time:** 30-40 minutes
+
+### Objective
+Add JavaScript logic to populate tab dropdowns, handle comparison, and display results.
+
+### Files to Modify
+- `popup/popup.js`
+
+### Step-by-Step Instructions
+
+**Step 1: Add element references**
+
+**Agent Prompt:**
+```
+Add element references for Compare section to the 'elements' object in popup.js.
+
+LOCATE: The 'elements' object definition near the top of popup.js.
+
+ADD these new element references:
+- compareTab1: document.getElementById('compareTab1')
+- compareTab2: document.getElementById('compareTab2')
+- compareOutputName: document.getElementById('compareOutputName')
+- compareKeyColumn: document.getElementById('compareKeyColumn')
+- compareBtn: document.getElementById('compareBtn')
+- refreshTabsBtn: document.getElementById('refreshTabsBtn')
+- compareResults: document.getElementById('compareResults')
+- compareTab1Count: document.getElementById('compareTab1Count')
+- compareTab2Count: document.getElementById('compareTab2Count')
+- compareNewCount: document.getElementById('compareNewCount')
+- compareOutputTab: document.getElementById('compareOutputTab')
+- compareError: document.getElementById('compareError')
+
+Place these with other element references, maintaining alphabetical or logical grouping.
+```
+
+**Expected Output (partial):**
+
+```javascript
+// Add to elements object:
+// --- Compare Section ---
+compareTab1: document.getElementById('compareTab1'),
+compareTab2: document.getElementById('compareTab2'),
+compareOutputName: document.getElementById('compareOutputName'),
+compareKeyColumn: document.getElementById('compareKeyColumn'),
+compareBtn: document.getElementById('compareBtn'),
+refreshTabsBtn: document.getElementById('refreshTabsBtn'),
+compareResults: document.getElementById('compareResults'),
+compareTab1Count: document.getElementById('compareTab1Count'),
+compareTab2Count: document.getElementById('compareTab2Count'),
+compareNewCount: document.getElementById('compareNewCount'),
+compareOutputTab: document.getElementById('compareOutputTab'),
+compareError: document.getElementById('compareError'),
+```
+
+**Step 2: Add state variables**
+
+**Agent Prompt:**
+```
+Add state variables for Compare section to the 'state' object in popup.js.
+
+LOCATE: The 'state' object definition.
+
+ADD these new state variables:
+- compareTabs: []  // Array of available tabs for comparison
+- isComparing: false  // Whether comparison is in progress
+
+These track the compare feature state.
+```
+
+**Step 3: Add loadTabsForComparison function**
+
+**Agent Prompt:**
+```
+Add a new function loadTabsForComparison to popup.js.
+
+This function should:
+1. Check if there's an active workbook selected
+2. Send GET_SHEET_TABS message to get all tabs
+3. Populate both compareTab1 and compareTab2 dropdowns with options
+4. Enable/disable the compare button based on state
+5. Handle errors gracefully
+
+IMPORTANT NOTES:
+- Check BOTH state.outputSheetId AND state.activeSheetId (from Phase 6)
+- Use state.activeSheetId if available, otherwise fall back to state.outputSheetId
+- sendMessage() helper already exists in popup.js (around line 105)
+- GET_SHEET_TABS message handler already exists in service_worker.js
+
+REQUIREMENTS:
+- Use existing sendMessage helper (already defined)
+- Clear existing options before adding new ones
+- Add a default "-- Select Tab --" option
+- Log with [POPUP] prefix
+- Handle case where no workbook is selected gracefully
+```
+
+**Expected Output:**
+
+```javascript
+/**
+ * Load available tabs for comparison dropdowns
+ * Uses the currently active workbook
+ */
+async function loadTabsForComparison() {
+    console.log('[POPUP] Loading tabs for comparison...');
+    
+    // Get active workbook ID from state (check both activeSheetId and outputSheetId)
+    // Phase 6 uses activeSheetId for workbook manager, outputSheetId for legacy output sheet
+    const spreadsheetId = state.activeSheetId || state.outputSheetId;
+    
+    if (!spreadsheetId) {
+        console.log('[POPUP] No active workbook, cannot load tabs');
+        showCompareError('Please select an active workbook first');
+        // Clear dropdowns
+        if (elements.compareTab1) {
+            elements.compareTab1.innerHTML = '<option value="">-- Select Tab --</option>';
+        }
+        if (elements.compareTab2) {
+            elements.compareTab2.innerHTML = '<option value="">-- Select Tab --</option>';
+        }
+        updateCompareButtonState();
+        return;
+    }
+    
+    try {
+        const response = await sendMessage('GET_SHEET_TABS', { spreadsheetId });
+        
+        if (!response.success) {
+            throw new Error(response.error || 'Failed to get tabs');
+        }
+        
+        const tabs = response.tabs || [];
+        state.compareTabs = tabs;
+        
+        console.log(`[POPUP] Found ${tabs.length} tabs for comparison`);
+        
+        // Clear and populate both dropdowns
+        populateTabDropdown(elements.compareTab1, tabs);
+        populateTabDropdown(elements.compareTab2, tabs);
+        
+        // Clear previous results and errors
+        hideCompareResults();
+        hideCompareError();
+        
+        // Update button state
+        updateCompareButtonState();
+        
+    } catch (error) {
+        console.error('[POPUP] Error loading tabs:', error);
+        showCompareError(`Failed to load tabs: ${error.message}`);
+    }
+}
+
+/**
+ * Populate a dropdown with tab options
+ */
+function populateTabDropdown(selectElement, tabs) {
+    // Clear existing options
+    selectElement.innerHTML = '';
+    
+    // Add default option
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = '-- Select Tab --';
+    selectElement.appendChild(defaultOption);
+    
+    // Add tab options
+    for (const tab of tabs) {
+        const option = document.createElement('option');
+        option.value = tab.title;
+        option.textContent = tab.title;
+        selectElement.appendChild(option);
+    }
+}
+
+/**
+ * Update compare button enabled/disabled state
+ */
+function updateCompareButtonState() {
+    const tab1Selected = elements.compareTab1?.value;
+    const tab2Selected = elements.compareTab2?.value;
+    const outputName = elements.compareOutputName?.value?.trim();
+    // Check both activeSheetId (Phase 6) and outputSheetId (legacy)
+    const hasWorkbook = !!(state.activeSheetId || state.outputSheetId);
+    
+    const canCompare = hasWorkbook && tab1Selected && tab2Selected && outputName && !state.isComparing;
+    
+    if (elements.compareBtn) {
+        elements.compareBtn.disabled = !canCompare;
+    }
+}
+```
+
+**Step 4: Add handleCompare function**
+
+**Agent Prompt:**
+```
+Add a new function handleCompare to popup.js.
+
+This function should:
+1. Get selected tabs and output name from UI
+2. Validate selections (different tabs, name provided)
+3. Send COMPARE_TABS message to service worker
+4. Display results or error
+5. Handle loading state (disable button, show spinner)
+
+REQUIREMENTS:
+- Use existing sendMessage helper
+- Update UI to show loading state
+- Display results in the results box
+- Handle errors gracefully
+- Re-enable button after completion
+```
+
+**Expected Output:**
+
+```javascript
+/**
+ * Handle Compare button click
+ */
+async function handleCompare() {
+    console.log('[POPUP] Starting comparison...');
+    
+    const tab1Name = elements.compareTab1.value;
+    const tab2Name = elements.compareTab2.value;
+    const outputName = elements.compareOutputName.value.trim();
+    const keyColumn = parseInt(elements.compareKeyColumn.value, 10) || 1;
+    // Check both activeSheetId (Phase 6) and outputSheetId (legacy)
+    const spreadsheetId = state.activeSheetId || state.outputSheetId;
+    
+    // Validation
+    if (!tab1Name || !tab2Name) {
+        showCompareError('Please select two tabs to compare');
+        return;
+    }
+    if (tab1Name === tab2Name) {
+        showCompareError('Please select two different tabs');
+        return;
+    }
+    if (!outputName) {
+        showCompareError('Please enter a name for the output tab');
+        return;
+    }
+    if (!spreadsheetId) {
+        showCompareError('No active workbook selected');
+        return;
+    }
+    
+    // Set loading state
+    state.isComparing = true;
+    elements.compareBtn.disabled = true;
+    elements.compareBtn.classList.add('loading');
+    hideCompareError();
+    hideCompareResults();
+    
+    try {
+        const response = await sendMessage('COMPARE_TABS', {
+            spreadsheetId,
+            tab1Name,
+            tab2Name,
+            outputTabName: outputName,
+            keyColumn
+        });
+        
+        if (!response.success) {
+            throw new Error(response.error || 'Comparison failed');
+        }
+        
+        console.log('[POPUP] Comparison complete:', response);
+        
+        // Display results
+        showCompareResults(response);
+        
+        // Clear output name input for next comparison
+        elements.compareOutputName.value = '';
+        
+        // Refresh tabs list to include new tab
+        await loadTabsForComparison();
+        
+    } catch (error) {
+        console.error('[POPUP] Compare error:', error);
+        showCompareError(error.message);
+    } finally {
+        // Reset loading state
+        state.isComparing = false;
+        elements.compareBtn.classList.remove('loading');
+        updateCompareButtonState();
+    }
+}
+
+/**
+ * Show comparison results
+ */
+function showCompareResults(result) {
+    elements.compareTab1Count.textContent = result.tab1Count || 0;
+    elements.compareTab2Count.textContent = result.tab2Count || 0;
+    elements.compareNewCount.textContent = result.newEntries || 0;
+    elements.compareOutputTab.textContent = result.outputTabName || '-';
+    elements.compareResults.style.display = 'block';
+}
+
+/**
+ * Hide comparison results
+ */
+function hideCompareResults() {
+    if (elements.compareResults) {
+        elements.compareResults.style.display = 'none';
+    }
+}
+
+/**
+ * Show comparison error
+ */
+function showCompareError(message) {
+    if (elements.compareError) {
+        elements.compareError.textContent = message;
+        elements.compareError.style.display = 'block';
+    }
+}
+
+/**
+ * Hide comparison error
+ */
+function hideCompareError() {
+    if (elements.compareError) {
+        elements.compareError.style.display = 'none';
+    }
+}
+```
+
+**Step 5: Add event listeners**
+
+**Agent Prompt:**
+```
+Add event listeners for the Compare section elements.
+
+LOCATE: The section where event listeners are added (usually in an init function or DOMContentLoaded handler).
+
+ADD event listeners for:
+1. compareBtn click → handleCompare()
+2. refreshTabsBtn click → loadTabsForComparison()
+3. compareTab1 change → updateCompareButtonState()
+4. compareTab2 change → updateCompareButtonState()
+5. compareOutputName input → updateCompareButtonState()
+
+ALSO: Call loadTabsForComparison() during initialization if a workbook is already loaded.
+
+REQUIREMENTS:
+- Check that elements exist before adding listeners (elements?.addEventListener)
+- Use existing patterns for event listener registration
+```
+
+**Expected Output:**
+
+```javascript
+// Add to initialization section (after DOM elements are defined):
+
+// --- Compare Section Event Listeners ---
+if (elements.compareBtn) {
+    elements.compareBtn.addEventListener('click', handleCompare);
+}
+if (elements.refreshTabsBtn) {
+    elements.refreshTabsBtn.addEventListener('click', loadTabsForComparison);
+}
+if (elements.compareTab1) {
+    elements.compareTab1.addEventListener('change', updateCompareButtonState);
+}
+if (elements.compareTab2) {
+    elements.compareTab2.addEventListener('change', updateCompareButtonState);
+}
+if (elements.compareOutputName) {
+    elements.compareOutputName.addEventListener('input', updateCompareButtonState);
+}
+```
+
+**Step 6: Integrate with workbook selection**
+
+**Agent Prompt:**
+```
+Find where the active workbook is set and add a call to loadTabsForComparison().
+
+LOCATE these functions in popup.js:
+1. handleWorkbookSelect() - around line 300 (Phase 6 workbook manager)
+2. handleLoadSheet() - around line 1068 (legacy output sheet)
+3. handleActiveSheetChange() - around line 369 (Phase 6 active sheet checkbox)
+
+ADD a call to loadTabsForComparison() in these locations:
+- In handleWorkbookSelect(): After a workbook is selected and state is updated
+- In handleLoadSheet(): After an output sheet is loaded and state.outputSheetId is set
+- In handleActiveSheetChange(): After active sheet type changes and state.activeSheetId is set
+
+IMPORTANT: Only call loadTabsForComparison() if the elements exist (check elements.compareTab1 first).
+
+EXAMPLE locations:
+// In handleWorkbookSelect() after line ~334:
+if (elements.compareTab1) {
+    await loadTabsForComparison();
+}
+
+// In handleLoadSheet() after setting state.outputSheetId:
+if (elements.compareTab1) {
+    await loadTabsForComparison();
+}
+```
+
+### Verification Steps
+
+1. **Syntax Check:**
+   - Reload extension
+   - Check popup console for errors
+
+2. **Functional Check:**
+   ```
+   1. Select an active workbook
+   2. Open Compare section
+   3. Verify dropdowns populate with tabs
+   4. Select two different tabs
+   5. Enter output name
+   6. Click Compare
+   7. Verify results display
+   ```
+
+3. **Error Handling:**
+   - Test with no workbook selected
+   - Test with same tab selected for both
+   - Test with empty output name
+   - Test with duplicate output tab name
+
+### 🧪 Gate Check 7.5
+
+```
+✅ Element references added to elements object
+✅ State variables added (compareTabs, isComparing)
+✅ loadTabsForComparison function works correctly
+✅ populateTabDropdown function works correctly
+✅ updateCompareButtonState enables/disables button appropriately
+✅ handleCompare function executes comparison
+✅ Results display correctly
+✅ Errors display correctly
+✅ Event listeners registered
+✅ Tabs load when workbook is selected
+✅ Loading state shows during comparison
+✅ Button re-enables after comparison
+```
+
+**If gate check passes:** Proceed to Task 7.6  
+**If gate check fails:** Fix errors before continuing
+
+---
+
+## 🔧 Task 7.6: Integration Testing
+
+**Status:** 🔲 Not Started  
+**Dependencies:** Tasks 7.1-7.5 must be complete  
+**Estimated Time:** 20-30 minutes
+
+### Objective
+Verify the complete compare feature works end-to-end.
+
+### Test Scenarios
+
+**Test 1: Basic Comparison Flow**
+```
+1. Load extension popup
+2. Select/activate a workbook with multiple tabs (e.g., 11_27_25, 11_28_25)
+3. Expand "Compare Tabs" section
+4. Verify both dropdowns populate with available tabs
+5. Select "11_27_25" as Tab 1 (baseline)
+6. Select "11_28_25" as Tab 2 (compare)
+7. Enter "new_leads" as output name
+8. Click Compare
+9. Verify:
+   - Loading state shows
+   - Results appear with counts
+   - New tab "new_leads" is created in workbook
+   - Tab contains only entries from 11_28_25 not in 11_27_25
+```
+
+**Test 2: Empty Differential**
+```
+1. Compare two identical tabs
+   (or tabs with same entries)
+2. Verify output tab is created with headers only
+3. Verify newEntries count is 0
+```
+
+**Test 3: Error Handling - Same Tab**
+```
+1. Select same tab for both dropdowns
+2. Click Compare
+3. Verify error message: "Please select two different tabs"
+```
+
+**Test 4: Error Handling - Duplicate Output Name**
+```
+1. Complete a comparison successfully (creates "new_leads" tab)
+2. Try to compare again with same output name "new_leads"
+3. Verify error message: "Tab already exists"
+```
+
+**Test 5: Error Handling - No Workbook**
+```
+1. Ensure no workbook is selected
+2. Try to open Compare section
+3. Verify appropriate error or empty dropdowns
+```
+
+**Test 6: Refresh Tabs Button**
+```
+1. Complete a comparison (creates new tab)
+2. Click "Refresh Tabs" button
+3. Verify new tab appears in both dropdowns
+```
+
+**Test 7: Key Column Selection**
+```
+1. Select "LinkedIn URL" as compare key
+2. Run comparison
+3. Verify comparison uses URL column for matching
+```
+
+### Console Verification
+
+**Service Worker Console:**
+```
+[SW] Received: GET_SHEET_TABS
+[SW] Received: COMPARE_TABS
+[SW] Comparing tabs: "11_27_25" vs "11_28_25" → "new_leads"
+```
+
+**Popup Console:**
+```
+[POPUP] Loading tabs for comparison...
+[POPUP] Found X tabs for comparison
+[POPUP] Starting comparison...
+[POPUP] Comparison complete: {success: true, newEntries: Y, ...}
+```
+
+**Sheets API Console:**
+```
+[SHEETS] Comparing tabs: "11_27_25" vs "11_28_25" → "new_leads"
+[SHEETS] Getting data from tab "11_27_25"...
+[SHEETS] Tab "11_27_25" has X data rows
+[SHEETS] Getting data from tab "11_28_25"...
+[SHEETS] Tab "11_28_25" has Y data rows
+[SHEETS] Tab1 has Z unique keys
+[SHEETS] Found N new entries in "11_28_25"
+[SHEETS] Created output tab: "new_leads"
+[SHEETS] Wrote N rows to "new_leads"
+[SHEETS] ✅ Comparison complete: N new entries
+```
+
+### 🧪 Final Gate Check
+
+```
+✅ Basic comparison flow works end-to-end
+✅ Empty differential creates tab with headers only
+✅ Same-tab validation error works
+✅ Duplicate output name error works
+✅ No-workbook error handling works
+✅ Refresh tabs button updates dropdowns
+✅ Key column selection works (Name vs LinkedIn URL)
+✅ Console logs show expected flow
+✅ No JavaScript errors in any console
+✅ Comparison results display correctly
+✅ New tab created in Google Sheets with correct data
+✅ Headers preserved in output tab
+```
+
+---
+
+## 🚨 Common Pitfalls & Anti-Bug Directives
+
+### Critical Issues to Avoid
+
+1. **Tab Name Formatting**
+   - **Problem**: Tab names with spaces break API calls
+   - **Solution**: Always use `formatTabNameForRange()` when building range strings
+   - **Code**: `const range = \`${formatTabNameForRange(tabName)}!A:Z\``
+   - **Note**: formatTabNameForRange() is internal to sheets_api.js, not exported - use it directly within that file
+
+2. **Duplicate Case Labels**
+   - **Problem**: Adding duplicate case in switch statement
+   - **Solution**: Search for existing case before adding new ones
+   - **Check**: `grep -n "case 'COMPARE_TABS'" service_worker.js`
+
+3. **Missing Null Checks**
+   - **Problem**: Accessing properties on null elements
+   - **Solution**: Always use optional chaining or null checks
+   - **Code**: `elements.compareBtn?.disabled` or `if (elements.compareBtn) { ... }`
+
+4. **Async/Await in Event Listeners**
+   - **Problem**: Unhandled promise rejections
+   - **Solution**: Wrap async handlers in try/catch
+   - **Code**: See handleCompare example with try/catch/finally
+
+5. **Import Duplication**
+   - **Problem**: Importing same function twice causes errors
+   - **Solution**: Add to existing import statement, don't create new one
+   - **Check**: Count occurrences of function name in imports
+
+6. **State Variable Selection**
+   - **Problem**: Using wrong state variable for workbook ID
+   - **Solution**: Check both state.activeSheetId (Phase 6) and state.outputSheetId (legacy)
+   - **Code**: `const spreadsheetId = state.activeSheetId || state.outputSheetId;`
+
+7. **Headers Already Added**
+   - **Problem**: Trying to add headers when addTabToSheet already does it
+   - **Solution**: addTabToSheet() automatically adds HEADERS_ROW, only use appendRows() for data rows
+   - **Note**: Don't pass headers to appendRows() when using addTabToSheet()
+
+### Code Quality Checklist
+
+Before each task completion, verify:
+
+- [ ] All new functions are exported where needed
+- [ ] All imports are at the top of the file (no inline imports)
+- [ ] Console logs use correct prefix: `[SHEETS]`, `[SW]`, or `[POPUP]`
+- [ ] Error messages are user-friendly
+- [ ] Loading states are properly managed
+- [ ] Buttons are disabled/enabled appropriately
+- [ ] No duplicate IDs in HTML
+- [ ] CSS follows existing naming conventions
+- [ ] Event listeners check element existence
+
+---
+
+## 📚 Reference
+
+### Message Flow Summary
+
+```
+Popup                    Service Worker           Sheets API
+──────                   ──────────────           ──────────
+GET_SHEET_TABS    →      getSheetTabs()     →    API call
+                  ←      tabs[]              ←    Response
+
+COMPARE_TABS      →      compareTabs()      →    Multiple API calls
+  - tab1Name             - getTabData(tab1)
+  - tab2Name             - getTabData(tab2)  
+  - outputTabName        - addTabToSheet()
+  - keyColumn            - appendRows()
+                  ←      result{}            ←    Success/Error
+```
+
+### State Variables Reference
+
+```javascript
+// popup.js state additions
+state.compareTabs = [];      // Array of {title, sheetId}
+state.isComparing = false;   // Boolean - comparison in progress
+
+// Existing state variables used:
+state.activeSheetId = null;  // Phase 6: Active workbook ID (preferred)
+state.outputSheetId = null;  // Legacy: Output sheet ID (fallback)
+```
+
+### Element IDs Reference
+
+| ID | Type | Purpose |
+|----|------|---------|
+| compareTab1 | select | Baseline tab dropdown |
+| compareTab2 | select | Compare tab dropdown |
+| compareOutputName | input | Output tab name |
+| compareKeyColumn | select | Key column selector |
+| compareBtn | button | Execute comparison |
+| refreshTabsBtn | button | Reload tabs list |
+| compareResults | div | Results container |
+| compareTab1Count | span | Tab 1 row count |
+| compareTab2Count | span | Tab 2 row count |
+| compareNewCount | span | New entries count |
+| compareOutputTab | span | Output tab name |
+| compareError | div | Error message |
+
+---
+
+## 🤖 Agent Execution Instructions
+
+### For Cursor AI / Claude Code
+
+**Copy this prompt to start:**
+
+```
+Follow the plan in `linkedin-scraper-plan.md` for Phase 7 exactly.
+
+EXECUTION RULES:
+1. Complete ONE task at a time
+2. Do NOT proceed to next task until current task passes Gate Check
+3. ALWAYS check for existing code before adding - no duplicates
+4. Run linter/syntax check after each file modification
+5. Test in browser after each task
+6. Log progress: "✅ Task 7.X complete, proceeding to 7.Y"
+
+START: Task 7.1 - Add comparison functions to sheets_api.js
+
+After each task:
+1. Save file
+2. Reload extension in Chrome
+3. Check service worker console for errors
+4. Check popup console for errors
+5. If errors, fix before proceeding
+6. If no errors, proceed to next task
+```
+
+### Task Execution Order
+
+```
+Task 7.1: sheets_api.js (getTabData, compareTabs)
+├── Add: getTabData function
+├── Add: compareTabs function
+└── Gate: Functions exported, no syntax errors
+
+Task 7.2: service_worker.js (message handlers)
+├── Update: imports
+├── Add: COMPARE_TABS case
+├── Add: GET_TAB_DATA case
+└── Gate: Test message returns validation error
+
+Task 7.3: popup.html (UI section)
+├── Add: Compare Tabs section HTML
+└── Gate: Section renders, IDs exist
+
+Task 7.4: popup.css (styling)
+├── Add: Compare section styles
+└── Gate: Styling matches theme
+
+Task 7.5: popup.js (logic)
+├── Add: element references
+├── Add: state variables
+├── Add: loadTabsForComparison()
+├── Add: handleCompare()
+├── Add: helper functions
+├── Add: event listeners
+└── Gate: Full UI interaction works
+
+Task 7.6: Integration Testing
+├── Test: All scenarios
+└── Gate: End-to-end workflow verified
+```
+
+### If Agent Gets Stuck
+
+1. **"Function not found"**: Check exports in sheets_api.js - ensure functions use `export async function`
+2. **"Cannot read property of null"**: Add null checks for elements - use optional chaining `elements.compareBtn?.`
+3. **"Duplicate case"**: Search file for existing case label - use grep to find existing cases
+4. **"Tabs not loading"**: Verify GET_SHEET_TABS handler exists in service_worker.js (it does, around line 225)
+5. **"Button stays disabled"**: Check updateCompareButtonState logic - verify state.activeSheetId or state.outputSheetId is set
+6. **"formatTabNameForRange is not defined"**: It's internal to sheets_api.js - use it directly, don't import
+7. **"getSheetTabs is not defined"**: It's already exported in sheets_api.js - check imports in service_worker.js
+8. **"Headers missing in output tab"**: addTabToSheet() adds headers automatically - don't add them again
+9. **"No workbook selected"**: Check both state.activeSheetId (Phase 6) and state.outputSheetId (legacy)
+10. **"Tab already exists error"**: This is expected behavior - user must choose different name
+
+---
+
+*Generated for agentic execution with Cursor AI. Each task is self-contained with verification gates.*
+
+---
+
+## 📦 PHASE 8: Packaging & Deployment
 
 ### Task 7.1: Prepare for Distribution
 
@@ -3403,6 +7043,9 @@ Create a Google Sheet with columns:
 30. ✅ **Connection Source from Input**: Use Source Connection from input sheet (Column A) instead of scraping it
 31. ✅ **Status Persistence**: Scraping state persists across popup closes/reopens
 32. ✅ **Pirate-Themed UI**: Black and red color scheme below header (header remains white/gray/blue)
+33. ✅ **Workbook Manager (Phase 6)**: Save/recall multiple Google Sheets, automatic dated tab creation (MM_DD_YY format), active sheet checkbox system
+34. ✅ **Automatic Daily Tab Creation**: Creates new dated tab automatically for each new day's scraping run
+35. ✅ **Active Sheet Selection**: Mutually exclusive checkbox system to designate active workbook or output sheet
 
 ### Verification Tests
 ```bash
@@ -3582,6 +7225,28 @@ Phase 5: Integration Testing
 ├── Test: Full scrape workflow
 ├── Test: Keep-alive survives 5+ minutes
 └── Test: Token refresh on 401
+
+Phase 6: Workbook Manager & Smart Tab Creation
+├── Update: sheets_api.js (ensureWeeklyTab, validateSpreadsheet)
+├── Update: service_worker.js (workbook management handlers)
+├── Update: sync_queue.js (tab support)
+├── Update: popup.html (Workbook Manager UI)
+├── Update: popup.css (Workbook Manager styles)
+├── Update: popup.js (Workbook Manager logic)
+└── Gate: Workbook Manager works, weekly tabs auto-created
+
+Phase 7: Tab Comparison & Differential List
+├── Update: sheets_api.js (getTabData, compareTabs)
+├── Update: service_worker.js (COMPARE_TABS, GET_TAB_DATA handlers)
+├── Update: popup.html (Compare Tabs section)
+├── Update: popup.css (Compare section styles)
+├── Update: popup.js (Compare logic)
+└── Gate: Tab comparison works end-to-end
+
+Phase 8: Packaging & Deployment
+├── Create: Build script
+├── Create: README.md
+└── Gate: Extension ready for distribution
 ```
 
 ### If Agent Gets Stuck

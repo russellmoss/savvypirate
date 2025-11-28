@@ -53,7 +53,41 @@ const elements = {
     nextSearchInfo: document.getElementById('nextSearchInfo'),
     allCompleteMessage: document.getElementById('allCompleteMessage'),
     proceedNextBtn: document.getElementById('proceedNextBtn'),
-    dismissNextBtn: document.getElementById('dismissNextBtn')
+    dismissNextBtn: document.getElementById('dismissNextBtn'),
+    
+    // Workbook Manager (Phase 6)
+    savedWorkbooksSelect: document.getElementById('savedWorkbooksSelect'),
+    addWorkbookBtn: document.getElementById('addWorkbookBtn'),
+    addWorkbookForm: document.getElementById('addWorkbookForm'),
+    newWorkbookId: document.getElementById('newWorkbookId'),
+    newWorkbookName: document.getElementById('newWorkbookName'),
+    saveNewWorkbookBtn: document.getElementById('saveNewWorkbookBtn'),
+    cancelAddWorkbookBtn: document.getElementById('cancelAddWorkbookBtn'),
+    selectedWorkbookInfo: document.getElementById('selectedWorkbookInfo'),
+    selectedWorkbookName: document.getElementById('selectedWorkbookName'),
+    selectedWorkbookId: document.getElementById('selectedWorkbookId'),
+    removeWorkbookBtn: document.getElementById('removeWorkbookBtn'),
+    activeTabDisplay: document.getElementById('activeTabDisplay'),
+    activeTabName: document.getElementById('activeTabName'),
+    activeTabStatus: document.getElementById('activeTabStatus'),
+    workbookActiveCheckbox: document.getElementById('workbookActiveCheckbox'),
+    workbookActiveCheck: document.getElementById('workbookActiveCheck'),
+    outputActiveCheckbox: document.getElementById('outputActiveCheckbox'),
+    outputActiveCheck: document.getElementById('outputActiveCheck'),
+    
+    // Compare Section (Phase 7)
+    compareTab1: document.getElementById('compareTab1'),
+    compareTab2: document.getElementById('compareTab2'),
+    compareOutputName: document.getElementById('compareOutputName'),
+    compareKeyColumn: document.getElementById('compareKeyColumn'),
+    compareBtn: document.getElementById('compareBtn'),
+    refreshTabsBtn: document.getElementById('refreshTabsBtn'),
+    compareResults: document.getElementById('compareResults'),
+    compareTab1Count: document.getElementById('compareTab1Count'),
+    compareTab2Count: document.getElementById('compareTab2Count'),
+    compareNewCount: document.getElementById('compareNewCount'),
+    compareOutputTab: document.getElementById('compareOutputTab'),
+    compareError: document.getElementById('compareError')
 };
 
 // --- STATE ---
@@ -67,7 +101,19 @@ let state = {
     isAuthenticated: false,
     isScrapingActive: false,
     totalSynced: 0,
-    nextSearchInfo: null
+    nextSearchInfo: null,
+    
+    // Phase 6: Workbook Manager
+    savedWorkbooks: [],
+    selectedWorkbook: null,
+    activeTabName: null,
+    activeSheetType: null, // 'workbook' or 'output'
+    activeSheetId: null,
+    activeSheetTab: null,
+    
+    // Phase 7: Compare Tabs
+    compareTabs: [],
+    isComparing: false
 };
 
 let queuePollInterval = null;
@@ -216,6 +262,307 @@ function extractSheetId(input) {
     const match = input.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
     return match ? match[1] : input.trim();
 }
+
+// ============================================================
+// PHASE 6: WORKBOOK MANAGER FUNCTIONS
+// ============================================================
+
+/**
+ * Load saved workbooks from storage and populate dropdown
+ */
+async function loadSavedWorkbooks() {
+    try {
+        const response = await sendMessage('GET_SAVED_WORKBOOKS');
+        state.savedWorkbooks = response.workbooks || [];
+        renderWorkbooksDropdown();
+        console.log('[POPUP] Loaded', state.savedWorkbooks.length, 'saved workbooks');
+    } catch (e) {
+        console.error('[POPUP] Failed to load workbooks:', e);
+    }
+}
+
+/**
+ * Render workbooks in the dropdown
+ */
+function renderWorkbooksDropdown() {
+    if (!elements.savedWorkbooksSelect) return;
+    
+    const select = elements.savedWorkbooksSelect;
+    
+    // Clear existing options (keep the placeholder)
+    select.innerHTML = '<option value="">-- Select a Saved Workbook --</option>';
+    
+    // Add saved workbooks
+    state.savedWorkbooks.forEach(wb => {
+        const option = document.createElement('option');
+        option.value = wb.id;
+        option.textContent = wb.name;
+        
+        // Color-code by recency
+        if (wb.lastUsed) {
+            const lastUsed = new Date(wb.lastUsed);
+            const daysSince = (Date.now() - lastUsed.getTime()) / (1000 * 60 * 60 * 24);
+            if (daysSince > 7) {
+                option.className = 'stale';
+                option.textContent += ` (${Math.floor(daysSince)}d ago)`;
+            }
+        }
+        
+        select.appendChild(option);
+    });
+}
+
+/**
+ * Handle workbook selection from dropdown
+ */
+async function handleWorkbookSelect() {
+    if (!elements.savedWorkbooksSelect) return;
+    
+    const selectedId = elements.savedWorkbooksSelect.value;
+    
+    if (!selectedId) {
+        // Nothing selected
+        state.selectedWorkbook = null;
+        if (elements.selectedWorkbookInfo) {
+            elements.selectedWorkbookInfo.style.display = 'none';
+        }
+        if (elements.activeTabDisplay) {
+            elements.activeTabDisplay.style.display = 'none';
+        }
+        if (elements.workbookActiveCheckbox) {
+            elements.workbookActiveCheckbox.style.display = 'none';
+        }
+        if (elements.workbookActiveCheck) {
+            elements.workbookActiveCheck.checked = false;
+        }
+        // Clear active sheet if it was workbook
+        if (state.activeSheetType === 'workbook') {
+            handleActiveSheetChange('output'); // Will uncheck if output not valid
+            state.activeSheetType = null;
+            state.activeSheetId = null;
+            state.activeSheetTab = null;
+        }
+        return;
+    }
+    
+    // Find the workbook
+    const workbook = state.savedWorkbooks.find(w => w.id === selectedId);
+    if (!workbook) return;
+    
+    state.selectedWorkbook = workbook;
+    
+    // Update UI
+    if (elements.selectedWorkbookInfo) {
+        elements.selectedWorkbookInfo.style.display = 'flex';
+    }
+    if (elements.selectedWorkbookName) {
+        elements.selectedWorkbookName.textContent = workbook.name;
+        elements.selectedWorkbookName.href = `https://docs.google.com/spreadsheets/d/${workbook.id}`;
+    }
+    if (elements.selectedWorkbookId) {
+        elements.selectedWorkbookId.textContent = workbook.id.substring(0, 20) + '...';
+    }
+    
+    // Show active sheet checkbox
+    if (elements.workbookActiveCheckbox) {
+        elements.workbookActiveCheckbox.style.display = 'block';
+    }
+    
+    // Check if there's a last used tab
+    if (workbook.lastTab && elements.activeTabDisplay) {
+        elements.activeTabDisplay.style.display = 'flex';
+        if (elements.activeTabName) {
+            elements.activeTabName.textContent = workbook.lastTab;
+        }
+        if (elements.activeTabStatus) {
+            elements.activeTabStatus.textContent = 'Last Used';
+            elements.activeTabStatus.className = 'tab-status existing';
+        }
+    }
+    
+    // Phase 7: Load tabs for comparison
+    if (elements.compareTab1) {
+        await loadTabsForComparison();
+    }
+}
+
+/**
+ * Handle active sheet checkbox change (mutually exclusive)
+ */
+function handleActiveSheetChange(sheetType) {
+    // Uncheck the other checkbox
+    if (sheetType === 'workbook') {
+        if (elements.outputActiveCheck) {
+            elements.outputActiveCheck.checked = false;
+        }
+        if (state.selectedWorkbook) {
+            state.activeSheetType = 'workbook';
+            state.activeSheetId = state.selectedWorkbook.id;
+            state.activeSheetTab = null; // Will be set when weekly tab is created
+            // Phase 7: Load tabs for comparison
+            if (elements.compareTab1) {
+                loadTabsForComparison();
+            }
+        } else {
+            // Can't activate without selection
+            if (elements.workbookActiveCheck) {
+                elements.workbookActiveCheck.checked = false;
+            }
+            state.activeSheetType = null;
+            state.activeSheetId = null;
+            state.activeSheetTab = null;
+        }
+    } else if (sheetType === 'output') {
+        if (elements.workbookActiveCheck) {
+            elements.workbookActiveCheck.checked = false;
+        }
+        if (state.outputSheetId) {
+            state.activeSheetType = 'output';
+            state.activeSheetId = state.outputSheetId;
+            state.activeSheetTab = state.currentTabName || 'Sheet1';
+            // Phase 7: Load tabs for comparison
+            if (elements.compareTab1) {
+                loadTabsForComparison();
+            }
+        } else {
+            // Can't activate without output sheet
+            if (elements.outputActiveCheck) {
+                elements.outputActiveCheck.checked = false;
+            }
+            state.activeSheetType = null;
+            state.activeSheetId = null;
+            state.activeSheetTab = null;
+        }
+    }
+    
+    updateActionButtons();
+}
+
+/**
+ * Get the currently active sheet info
+ */
+function getActiveSheet() {
+    if (state.activeSheetType === 'workbook' && state.activeSheetId) {
+        // For workbook, use activeSheetTab if set, otherwise use lastTab from selected workbook
+        // If no tab name yet, that's okay - we'll create the weekly tab when starting scraping
+        let tabName = state.activeSheetTab;
+        if (!tabName && state.selectedWorkbook && state.selectedWorkbook.lastTab) {
+            tabName = state.selectedWorkbook.lastTab;
+        }
+        // Return sheet object even if tabName is null - handleStartScraping will create the tab
+        return {
+            type: 'workbook',
+            spreadsheetId: state.activeSheetId,
+            tabName: tabName // Can be null, will be created when starting
+        };
+    } else if (state.activeSheetType === 'output' && state.activeSheetId) {
+        return {
+            type: 'output',
+            spreadsheetId: state.activeSheetId,
+            tabName: state.currentTabName || 'Sheet1'
+        };
+    }
+    return null;
+}
+
+/**
+ * Show the add workbook form
+ */
+function showAddWorkbookForm() {
+    if (!elements.addWorkbookForm) return;
+    elements.addWorkbookForm.style.display = 'block';
+    if (elements.newWorkbookId) {
+        elements.newWorkbookId.value = '';
+        elements.newWorkbookId.focus();
+    }
+    if (elements.newWorkbookName) {
+        elements.newWorkbookName.value = '';
+    }
+}
+
+/**
+ * Hide the add workbook form
+ */
+function hideAddWorkbookForm() {
+    if (!elements.addWorkbookForm) return;
+    elements.addWorkbookForm.style.display = 'none';
+    if (elements.newWorkbookId) {
+        elements.newWorkbookId.value = '';
+    }
+    if (elements.newWorkbookName) {
+        elements.newWorkbookName.value = '';
+    }
+}
+
+/**
+ * Save a new workbook
+ */
+async function handleSaveWorkbook() {
+    if (!elements.newWorkbookId) return;
+    
+    let sheetId = elements.newWorkbookId.value.trim();
+    const name = elements.newWorkbookName ? elements.newWorkbookName.value.trim() : '';
+    
+    if (!sheetId) {
+        updateStatus('❌ Please enter a Sheet ID or URL');
+        return;
+    }
+    
+    // Extract ID from URL if needed
+    sheetId = extractSheetId(sheetId);
+    
+    updateStatus('🔍 Validating spreadsheet...');
+    
+    try {
+        const response = await sendMessage('SAVE_WORKBOOK', { 
+            id: sheetId, 
+            name: name || null  // Let backend use sheet title if no name provided
+        });
+        
+        if (response.success) {
+            updateStatus(`✅ Saved: ${response.workbook.name}`);
+            hideAddWorkbookForm();
+            await loadSavedWorkbooks();
+            
+            // Auto-select the new workbook
+            if (elements.savedWorkbooksSelect) {
+                elements.savedWorkbooksSelect.value = sheetId;
+                await handleWorkbookSelect();
+            }
+        } else {
+            updateStatus(`❌ ${response.error}`);
+        }
+    } catch (e) {
+        updateStatus(`❌ ${e.message}`);
+    }
+}
+
+/**
+ * Remove selected workbook from saved list
+ */
+async function handleRemoveWorkbook() {
+    if (!state.selectedWorkbook) return;
+    
+    const confirmed = confirm(`Remove "${state.selectedWorkbook.name}" from saved workbooks?\n\nThis won't delete the Google Sheet, just removes it from this extension.`);
+    
+    if (!confirmed) return;
+    
+    try {
+        await sendMessage('DELETE_WORKBOOK', { id: state.selectedWorkbook.id });
+        updateStatus(`✅ Removed: ${state.selectedWorkbook.name}`);
+        
+        state.selectedWorkbook = null;
+        if (elements.savedWorkbooksSelect) {
+            elements.savedWorkbooksSelect.value = '';
+        }
+        handleWorkbookSelect();
+        
+        await loadSavedWorkbooks();
+    } catch (e) {
+        updateStatus(`❌ ${e.message}`);
+    }
+}
+
 
 // --- QUEUE MANAGEMENT ---
 async function updateQueueStatus() {
@@ -462,9 +809,9 @@ function handleDismissNext() {
 
 // --- ACTION BUTTON STATE ---
 function updateActionButtons() {
-    const hasOutput = !!state.outputSheetId;
+    const hasActiveSheet = !!getActiveSheet(); // Check if any sheet is marked active
     const hasSearches = state.searches.length > 0;
-    const canStart = hasOutput && hasSearches && !state.isScrapingActive;
+    const canStart = hasActiveSheet && hasSearches && !state.isScrapingActive;
 
     elements.startScrapingBtn.disabled = !canStart;
     elements.stopScrapingBtn.disabled = !state.isScrapingActive;
@@ -592,6 +939,12 @@ async function handleTabChange() {
         const response = await sendMessage('SET_CURRENT_TAB', { tabName: selectedTab });
         if (response.success) {
             state.currentTabName = selectedTab;
+            
+            // Update active sheet tab if output sheet is active
+            if (state.activeSheetType === 'output') {
+                state.activeSheetTab = selectedTab;
+            }
+            
             updateActionButtons();
             updateStatus(`✅ Switched to tab: ${selectedTab}`);
         }
@@ -726,6 +1079,12 @@ async function handleCreateSheet() {
         });
 
         updateActionButtons();
+        
+        // Show active sheet checkbox for output section
+        if (elements.outputActiveCheckbox) {
+            elements.outputActiveCheckbox.style.display = 'block';
+        }
+        
         updateStatus(`✅ Created: ${name}`, 100);
         elements.newSheetName.value = '';
 
@@ -789,6 +1148,17 @@ async function handleLoadSheet() {
         }
 
         updateActionButtons();
+        
+        // Show active sheet checkbox for output section
+        if (elements.outputActiveCheckbox) {
+            elements.outputActiveCheckbox.style.display = 'block';
+        }
+        
+        // Phase 7: Load tabs for comparison
+        if (elements.compareTab1) {
+            await loadTabsForComparison();
+        }
+        
         updateStatus(`✅ Loaded: ${response.sheetName}`, 100);
         elements.loadSheetId.value = '';
 
@@ -851,6 +1221,13 @@ async function handleStartScraping() {
         return;
     }
 
+    // Check which sheet is active
+    const activeSheet = getActiveSheet();
+    if (!activeSheet) {
+        updateStatus('❌ Please check an active sheet in Workbook Manager or Output Sheet');
+        return;
+    }
+
     state.isScrapingActive = true;
     updateActionButtons();
     
@@ -860,15 +1237,58 @@ async function handleStartScraping() {
     updateStatus('⚓ Checking content script...', 5);
 
     try {
+        let targetSheetId = activeSheet.spreadsheetId;
+        let targetTabName = activeSheet.tabName;
+        
+        // If workbook is active, ensure weekly tab exists
+        if (activeSheet.type === 'workbook') {
+            updateStatus('📅 Setting up weekly tab...', 10);
+            
+            const tabResult = await sendMessage('ENSURE_WEEKLY_TAB', {
+                spreadsheetId: activeSheet.spreadsheetId
+            });
+            
+            targetTabName = tabResult.tabName;
+            state.activeSheetTab = tabResult.tabName;
+            
+            // Update UI to show active tab
+            if (elements.activeTabDisplay) {
+                elements.activeTabDisplay.style.display = 'flex';
+            }
+            if (elements.activeTabName) {
+                elements.activeTabName.textContent = tabResult.tabName;
+            }
+            if (elements.activeTabStatus) {
+                if (tabResult.isNew) {
+                    elements.activeTabStatus.textContent = 'NEW';
+                    elements.activeTabStatus.className = 'tab-status new';
+                } else {
+                    elements.activeTabStatus.textContent = 'Existing';
+                    elements.activeTabStatus.className = 'tab-status existing';
+                }
+            }
+            
+            // Set as current output in service worker
+            await sendMessage('SET_ACTIVE_TAB', {
+                spreadsheetId: activeSheet.spreadsheetId,
+                tabName: tabResult.tabName
+            });
+        } else {
+            // Output sheet is active - set as current output
+            await sendMessage('SET_OUTPUT_SHEET', {
+                spreadsheetId: activeSheet.spreadsheetId,
+                tabName: activeSheet.tabName
+            });
+        }
+        
         // CRITICAL: Ensure content script is injected before sending commands
-        // This handles page reloads, fresh installs, and navigation edge cases
         const isInjected = await ensureContentScriptInjected(tab.id);
         
         if (!isInjected) {
             throw new Error('Content script could not be loaded. Please refresh the LinkedIn page.');
         }
         
-        updateStatus('🚀 Starting scraper...', 10);
+        updateStatus(`🚀 Starting scraper to ${targetTabName}...`, 10);
         startQueuePolling();
         startStatusChecking();
         
@@ -950,14 +1370,44 @@ async function handleForceSync() {
 }
 
 async function handleDeduplicate() {
-    if (!state.outputSheetId) {
-        updateStatus('❌ No output sheet selected');
+    // Get the currently active sheet
+    const activeSheet = getActiveSheet();
+    if (!activeSheet) {
+        updateStatus('❌ Please check an active sheet in Workbook Manager or Output Sheet');
+        return;
+    }
+    
+    // For workbook type, if no tab name, we need to get the last used tab or ensure weekly tab
+    let tabName = activeSheet.tabName;
+    if (activeSheet.type === 'workbook' && !tabName) {
+        if (state.selectedWorkbook && state.selectedWorkbook.lastTab) {
+            tabName = state.selectedWorkbook.lastTab;
+        } else {
+            // Need to ensure weekly tab exists first
+            updateStatus('📅 Creating weekly tab for deduplication...');
+            try {
+                const tabResult = await sendMessage('ENSURE_WEEKLY_TAB', {
+                    spreadsheetId: activeSheet.spreadsheetId
+                });
+                tabName = tabResult.tabName;
+            } catch (e) {
+                updateStatus(`❌ Could not create weekly tab: ${e.message}`);
+                return;
+            }
+        }
+    }
+    
+    if (!tabName) {
+        updateStatus('❌ Could not determine tab name for deduplication');
         return;
     }
     
     updateStatus('🧹 Deduplicating sheet...');
     try {
-        const result = await sendMessage('DEDUPLICATE_SHEET');
+        const result = await sendMessage('DEDUPLICATE_SHEET', {
+            spreadsheetId: activeSheet.spreadsheetId,
+            tabName: tabName
+        });
         if (result.success) {
             updateStatus(`✅ Removed ${result.removed} duplicate(s), kept ${result.unique} unique rows`);
         } else {
@@ -965,6 +1415,227 @@ async function handleDeduplicate() {
         }
     } catch (e) {
         updateStatus(`❌ Deduplication error: ${e.message}`);
+    }
+}
+
+// ============================================================
+// PHASE 7: COMPARE TABS
+// ============================================================
+
+/**
+ * Load available tabs for comparison dropdowns
+ * Uses the currently active workbook
+ */
+async function loadTabsForComparison() {
+    console.log('[POPUP] Loading tabs for comparison...');
+    
+    // Get active workbook ID from state (check both activeSheetId and outputSheetId)
+    // Phase 6 uses activeSheetId for workbook manager, outputSheetId for legacy output sheet
+    const spreadsheetId = state.activeSheetId || state.outputSheetId;
+    
+    if (!spreadsheetId) {
+        console.log('[POPUP] No active workbook, cannot load tabs');
+        showCompareError('Please select an active workbook first');
+        // Clear dropdowns
+        if (elements.compareTab1) {
+            elements.compareTab1.innerHTML = '<option value="">-- Select Tab --</option>';
+        }
+        if (elements.compareTab2) {
+            elements.compareTab2.innerHTML = '<option value="">-- Select Tab --</option>';
+        }
+        updateCompareButtonState();
+        return;
+    }
+    
+    try {
+        const response = await sendMessage('GET_SHEET_TABS', { spreadsheetId });
+        
+        if (!response.success) {
+            throw new Error(response.error || 'Failed to get tabs');
+        }
+        
+        const tabs = response.tabs || [];
+        state.compareTabs = tabs;
+        
+        console.log(`[POPUP] Found ${tabs.length} tabs for comparison`);
+        
+        // Clear and populate both dropdowns
+        populateTabDropdown(elements.compareTab1, tabs);
+        populateTabDropdown(elements.compareTab2, tabs);
+        
+        // Clear previous results and errors
+        hideCompareResults();
+        hideCompareError();
+        
+        // Update button state
+        updateCompareButtonState();
+        
+    } catch (error) {
+        console.error('[POPUP] Error loading tabs:', error);
+        showCompareError(`Failed to load tabs: ${error.message}`);
+    }
+}
+
+/**
+ * Populate a dropdown with tab options
+ */
+function populateTabDropdown(selectElement, tabs) {
+    if (!selectElement) return;
+    
+    // Clear existing options
+    selectElement.innerHTML = '';
+    
+    // Add default option
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = '-- Select Tab --';
+    selectElement.appendChild(defaultOption);
+    
+    // Add tab options
+    for (const tab of tabs) {
+        const option = document.createElement('option');
+        option.value = tab.title;
+        option.textContent = tab.title;
+        selectElement.appendChild(option);
+    }
+}
+
+/**
+ * Update compare button enabled/disabled state
+ */
+function updateCompareButtonState() {
+    const tab1Selected = elements.compareTab1?.value;
+    const tab2Selected = elements.compareTab2?.value;
+    const outputName = elements.compareOutputName?.value?.trim();
+    // Check both activeSheetId (Phase 6) and outputSheetId (legacy)
+    const hasWorkbook = !!(state.activeSheetId || state.outputSheetId);
+    
+    const canCompare = hasWorkbook && tab1Selected && tab2Selected && outputName && !state.isComparing;
+    
+    if (elements.compareBtn) {
+        elements.compareBtn.disabled = !canCompare;
+    }
+}
+
+/**
+ * Handle Compare button click
+ */
+async function handleCompare() {
+    console.log('[POPUP] Starting comparison...');
+    
+    const tab1Name = elements.compareTab1.value;
+    const tab2Name = elements.compareTab2.value;
+    const outputName = elements.compareOutputName.value.trim();
+    const keyColumn = parseInt(elements.compareKeyColumn.value, 10) || 1;
+    // Check both activeSheetId (Phase 6) and outputSheetId (legacy)
+    const spreadsheetId = state.activeSheetId || state.outputSheetId;
+    
+    // Validation
+    if (!tab1Name || !tab2Name) {
+        showCompareError('Please select two tabs to compare');
+        return;
+    }
+    if (tab1Name === tab2Name) {
+        showCompareError('Please select two different tabs');
+        return;
+    }
+    if (!outputName) {
+        showCompareError('Please enter a name for the output tab');
+        return;
+    }
+    if (!spreadsheetId) {
+        showCompareError('No active workbook selected');
+        return;
+    }
+    
+    // Set loading state
+    state.isComparing = true;
+    elements.compareBtn.disabled = true;
+    elements.compareBtn.classList.add('loading');
+    hideCompareError();
+    hideCompareResults();
+    
+    try {
+        const response = await sendMessage('COMPARE_TABS', {
+            spreadsheetId,
+            tab1Name,
+            tab2Name,
+            outputTabName: outputName,
+            keyColumn
+        });
+        
+        if (!response.success) {
+            throw new Error(response.error || 'Comparison failed');
+        }
+        
+        console.log('[POPUP] Comparison complete:', response);
+        
+        // Display results
+        showCompareResults(response);
+        
+        // Clear output name input for next comparison
+        elements.compareOutputName.value = '';
+        
+        // Refresh tabs list to include new tab
+        await loadTabsForComparison();
+        
+    } catch (error) {
+        console.error('[POPUP] Compare error:', error);
+        showCompareError(error.message);
+    } finally {
+        // Reset loading state
+        state.isComparing = false;
+        elements.compareBtn.classList.remove('loading');
+        updateCompareButtonState();
+    }
+}
+
+/**
+ * Show comparison results
+ */
+function showCompareResults(result) {
+    if (elements.compareTab1Count) {
+        elements.compareTab1Count.textContent = result.tab1Count || 0;
+    }
+    if (elements.compareTab2Count) {
+        elements.compareTab2Count.textContent = result.tab2Count || 0;
+    }
+    if (elements.compareNewCount) {
+        elements.compareNewCount.textContent = result.newEntries || 0;
+    }
+    if (elements.compareOutputTab) {
+        elements.compareOutputTab.textContent = result.outputTabName || '-';
+    }
+    if (elements.compareResults) {
+        elements.compareResults.style.display = 'block';
+    }
+}
+
+/**
+ * Hide comparison results
+ */
+function hideCompareResults() {
+    if (elements.compareResults) {
+        elements.compareResults.style.display = 'none';
+    }
+}
+
+/**
+ * Show comparison error
+ */
+function showCompareError(message) {
+    if (elements.compareError) {
+        elements.compareError.textContent = message;
+        elements.compareError.style.display = 'block';
+    }
+}
+
+/**
+ * Hide comparison error
+ */
+function hideCompareError() {
+    if (elements.compareError) {
+        elements.compareError.style.display = 'none';
     }
 }
 
@@ -1053,6 +1724,11 @@ async function init() {
             
             // Load tabs for the sheet
             await loadTabsForSheet(state.outputSheetId);
+            
+            // Show active sheet checkbox for output section
+            if (elements.outputActiveCheckbox) {
+                elements.outputActiveCheckbox.style.display = 'block';
+            }
         }
 
         // Check auth status
@@ -1065,6 +1741,9 @@ async function init() {
 
         // Initial queue status
         await updateQueueStatus();
+        
+        // Phase 6: Load saved workbooks
+        await loadSavedWorkbooks();
         
         // Check if scraping is actually active (persists across popup closes)
         const wasScrapingActive = await checkScrapingStatus();
@@ -1109,6 +1788,52 @@ async function init() {
     });
     elements.proceedNextBtn?.addEventListener('click', handleProceedNext);
     elements.dismissNextBtn?.addEventListener('click', handleDismissNext);
+    
+    // Phase 6: Workbook Manager event listeners
+    elements.savedWorkbooksSelect?.addEventListener('change', handleWorkbookSelect);
+    elements.addWorkbookBtn?.addEventListener('click', showAddWorkbookForm);
+    elements.cancelAddWorkbookBtn?.addEventListener('click', hideAddWorkbookForm);
+    elements.saveNewWorkbookBtn?.addEventListener('click', handleSaveWorkbook);
+    elements.removeWorkbookBtn?.addEventListener('click', handleRemoveWorkbook);
+    
+    // Workbook name link click handler
+    elements.selectedWorkbookName?.addEventListener('click', (e) => {
+        e.preventDefault();
+        const href = elements.selectedWorkbookName.href;
+        if (href && href !== '#') {
+            chrome.tabs.create({ url: href });
+        }
+    });
+    
+    // Active sheet checkbox listeners (mutually exclusive)
+    elements.workbookActiveCheck?.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            handleActiveSheetChange('workbook');
+        } else {
+            state.activeSheetType = null;
+            state.activeSheetId = null;
+            state.activeSheetTab = null;
+            updateActionButtons();
+        }
+    });
+    
+    elements.outputActiveCheck?.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            handleActiveSheetChange('output');
+        } else {
+            state.activeSheetType = null;
+            state.activeSheetId = null;
+            state.activeSheetTab = null;
+            updateActionButtons();
+        }
+    });
+    
+    // Phase 7: Compare Section event listeners
+    elements.compareBtn?.addEventListener('click', handleCompare);
+    elements.refreshTabsBtn?.addEventListener('click', loadTabsForComparison);
+    elements.compareTab1?.addEventListener('change', updateCompareButtonState);
+    elements.compareTab2?.addEventListener('change', updateCompareButtonState);
+    elements.compareOutputName?.addEventListener('input', updateCompareButtonState);
     
     elements.openOutputSheet.addEventListener('click', (e) => {
         e.preventDefault();
