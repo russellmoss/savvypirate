@@ -252,8 +252,107 @@
     // ============================================================
     // NAVIGATOR MODULE: Pagination
     // ============================================================
+    
+    /**
+     * Detect pagination state: count visible pages and check if Next button exists
+     * @returns {Object} { pageCount: number, hasNext: boolean, estimatedTotal: number }
+     */
+    function detectPaginationState() {
+        // Count visible page numbers (buttons with data-testid="pagination-indicator-*")
+        const pageButtons = document.querySelectorAll('button[data-testid^="pagination-indicator-"]');
+        const pageNumbers = Array.from(pageButtons).map(btn => {
+            const span = btn.querySelector('span');
+            return span ? parseInt(span.innerText.trim()) : null;
+        }).filter(num => num !== null);
+        
+        // Also check for current page (span with page number, not in button)
+        const currentPageSpans = document.querySelectorAll('span._1387a4df._11077d88._652ff0f5._0aab64e7');
+        currentPageSpans.forEach(span => {
+            const num = parseInt(span.innerText.trim());
+            if (num && !pageNumbers.includes(num)) {
+                pageNumbers.push(num);
+            }
+        });
+        
+        const visiblePageCount = pageNumbers.length > 0 ? Math.max(...pageNumbers) : 1;
+        
+        // Check for Next button with chevron (data-testid="pagination-controls-next-button-visible")
+        const nextButton = document.querySelector('button[data-testid="pagination-controls-next-button-visible"]');
+        const hasNext = nextButton !== null && nextButton.offsetParent !== null;
+        
+        // Estimate total: if we see 10 pages and Next exists, there are at least 100+ entries
+        // Each page = 10 entries, so visible pages * 10 = minimum
+        // If Next exists, add 10 more (at least)
+        let estimatedTotal = visiblePageCount * 10;
+        if (hasNext) {
+            estimatedTotal += 10; // At least one more page
+        }
+        
+        return {
+            pageCount: visiblePageCount,
+            hasNext: hasNext,
+            estimatedTotal: estimatedTotal,
+            visiblePages: pageNumbers.sort((a, b) => a - b)
+        };
+    }
+    
+    /**
+     * Wait for all entries on current page to load
+     * @param {number} expectedCount - Expected number of entries (default: 10)
+     * @param {number} maxWaitMs - Maximum time to wait (default: 10000ms)
+     * @returns {Promise<number>} Actual count of loaded entries
+     */
+    async function waitForEntriesToLoad(expectedCount = 10, maxWaitMs = 10000) {
+        const startTime = Date.now();
+        let lastCount = 0;
+        let stableCount = 0;
+        
+        while (Date.now() - startTime < maxWaitMs) {
+            // Scroll to bottom to trigger lazy loading
+            window.scrollTo(0, document.body.scrollHeight);
+            await wait(500);
+            
+            // Count loaded entries
+            const cards = document.querySelectorAll('div[data-view-name="people-search-result"]');
+            const currentCount = cards.length;
+            
+            if (currentCount === lastCount) {
+                stableCount++;
+                // If count is stable for 2 checks (1 second), we're done
+                if (stableCount >= 2) {
+                    break;
+                }
+            } else {
+                stableCount = 0;
+            }
+            
+            lastCount = currentCount;
+            
+            // If we have at least expected count, check if more are loading
+            if (currentCount >= expectedCount) {
+                // Wait a bit more to see if more load
+                await wait(1000);
+                const finalCards = document.querySelectorAll('div[data-view-name="people-search-result"]');
+                if (finalCards.length === currentCount) {
+                    break; // No more loading
+                }
+            }
+        }
+        
+        const finalCards = document.querySelectorAll('div[data-view-name="people-search-result"]');
+        return finalCards.length;
+    }
+    
     function clickNextButton() {
-        // Strategy 1: Find visible "Next" text
+        // Strategy 1: Find Next button with data-testid (most reliable)
+        const nextBtn = document.querySelector('button[data-testid="pagination-controls-next-button-visible"]');
+        if (nextBtn && nextBtn.offsetParent !== null) {
+            console.log('[CS] Found Next via data-testid');
+            nextBtn.click();
+            return true;
+        }
+        
+        // Strategy 2: Find visible "Next" text
         const allElements = Array.from(document.querySelectorAll('span, button, a'));
         const nextEl = allElements.find(el => 
             el.innerText && 
@@ -266,7 +365,7 @@
             return true;
         }
 
-        // Strategy 2: Aria label
+        // Strategy 3: Aria label
         const ariaBtn = document.querySelector('button[aria-label="Next"]');
         if (ariaBtn && !ariaBtn.disabled) {
             console.log('[CS] Found Next via aria-label');
@@ -274,7 +373,7 @@
             return true;
         }
 
-        // Strategy 3: Pagination class
+        // Strategy 4: Pagination class
         const paginationBtn = document.querySelector('.artdeco-pagination__button--next:not([disabled])');
         if (paginationBtn) {
             console.log('[CS] Found Next via class');
@@ -310,21 +409,68 @@
 
         let pageCount = 0;
         let totalProfiles = 0;
+        let estimatedTotal = 0;
+
+        // Detect initial pagination state on first page
+        const initialPagination = detectPaginationState();
+        estimatedTotal = initialPagination.estimatedTotal;
+        console.log(`[CS] 📊 Initial pagination: ${initialPagination.pageCount} visible pages, Next: ${initialPagination.hasNext}, Est. total: ${estimatedTotal} entries`);
 
         // Main loop
         while (!stopRequested && pageCount < CONFIG.MAX_PAGES) {
             pageCount++;
-            updateButtonStatus(`🔄 Page ${pageCount} (${totalProfiles} found)`, null);
-            console.log(`[CS] --- Page ${pageCount} ---`);
+            
+            // Update pagination state for progress estimation
+            const paginationState = detectPaginationState();
+            if (paginationState.hasNext && paginationState.estimatedTotal > estimatedTotal) {
+                estimatedTotal = paginationState.estimatedTotal;
+            }
+            
+            // Calculate progress percentage
+            const progressPercent = estimatedTotal > 0 
+                ? Math.min(100, Math.round((totalProfiles / estimatedTotal) * 100))
+                : 0;
+            
+            const remainingEstimate = Math.max(0, estimatedTotal - totalProfiles);
+            updateButtonStatus(`🔄 Page ${pageCount} | ${totalProfiles}/${estimatedTotal} (${progressPercent}%) | ~${remainingEstimate} left`, null);
+            console.log(`[CS] --- Page ${pageCount} --- (Est. ${estimatedTotal} total, ${totalProfiles} found, ${remainingEstimate} remaining)`);
 
-            // Scroll to load lazy content
+            // Wait for all entries on this page to load (expect 10 per page)
+            console.log(`[CS] ⏳ Waiting for all entries to load on page ${pageCount}...`);
+            const loadedCount = await waitForEntriesToLoad(10, 10000);
+            console.log(`[CS] ✅ ${loadedCount} entries loaded on page ${pageCount}`);
+
+            // Scroll to load any remaining lazy content
             window.scrollTo(0, document.body.scrollHeight);
             await wait(CONFIG.SCROLL_WAIT_MS);
 
             // Scrape this page
             const pageRows = scrapeCurrentPage(sourceName);
             totalProfiles += pageRows.length;
-            console.log(`[CS] ✅ Found ${pageRows.length} profiles`);
+            
+            // Warn if we got fewer entries than expected
+            if (pageRows.length < 10 && paginationState.hasNext) {
+                console.warn(`[CS] ⚠️ Only found ${pageRows.length} profiles on page ${pageCount} (expected ~10). Waiting longer...`);
+                // Wait a bit more and try again
+                await wait(2000);
+                window.scrollTo(0, document.body.scrollHeight);
+                await wait(1000);
+                const retryRows = scrapeCurrentPage(sourceName);
+                if (retryRows.length > pageRows.length) {
+                    console.log(`[CS] ✅ Retry found ${retryRows.length - pageRows.length} more profiles`);
+                    totalProfiles += (retryRows.length - pageRows.length);
+                    // Send the additional rows
+                    if (retryRows.length > pageRows.length) {
+                        sendMessageSafe({
+                            action: 'DATA_SCRAPED',
+                            rows: retryRows.slice(pageRows.length),
+                            pageNumber: pageCount
+                        });
+                    }
+                }
+            }
+            
+            console.log(`[CS] ✅ Found ${pageRows.length} profiles on page ${pageCount} (Total: ${totalProfiles})`);
 
             // Send to background for immediate sync
             if (pageRows.length > 0) {
@@ -344,14 +490,14 @@
             // Navigate to next page
             const hasNext = clickNextButton();
             if (!hasNext) {
-                console.log('[CS] 🏁 No more pages');
+                console.log('[CS] 🏁 No more pages - reached end of results');
                 break;
             }
 
-            // Random delay
+            // Random delay before next page
             const delay = randomDelay();
-            console.log(`[CS] ⏳ Waiting ${(delay/1000).toFixed(1)}s...`);
-            updateButtonStatus(`⏳ Waiting... (${totalProfiles} found)`, null);
+            console.log(`[CS] ⏳ Waiting ${(delay/1000).toFixed(1)}s before next page...`);
+            updateButtonStatus(`⏳ Waiting... (${totalProfiles}/${estimatedTotal} found)`, null);
             await wait(delay);
         }
 

@@ -2675,7 +2675,7 @@ function waitForScrapingComplete(timeoutMs = 600000) {
         const timeout = setTimeout(() => {
             if (!resolved) {
                 resolved = true;
-                chrome.runtime.onMessage.removeListener(listener);
+            chrome.runtime.onMessage.removeListener(listener);
                 reject(new Error('Scraping timeout after 10 minutes'));
             }
         }, timeoutMs);
@@ -2983,8 +2983,8 @@ async function handleAutoRun() {
         
         if (response.success) {
             state.isAutoRunning = true;
-            
-            // Update UI
+    
+    // Update UI
             if (elements.autoRunBtn) elements.autoRunBtn.style.display = 'none';
             if (elements.stopAutoRunBtn) elements.stopAutoRunBtn.style.display = 'block';
             if (elements.autoRunProgress) elements.autoRunProgress.style.display = 'block';
@@ -3444,7 +3444,7 @@ Test:
 16. Verify:
     - First source processed (2 searches sequentially)
     - After first source: deduplicate ran
-    - 60 second delay
+   - 60 second delay
     - Second source processed (2 searches)
     - After second source: deduplicate ran
     - Completion message shows

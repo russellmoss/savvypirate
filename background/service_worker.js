@@ -8,7 +8,8 @@ import {
     getQueueStatus, 
     getFailedRows, 
     clearFailedRows,
-    retryFailedItems 
+    retryFailedItems,
+    updateQueueTabName
 } from './sync_queue.js';
 
 // --- STATE ---
@@ -93,7 +94,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         
         // Send progress update to popup (if open)
         if (state.progress) {
-            sendAutoRunProgressUpdate(state.progress, true);
+            chrome.runtime.sendMessage({
+                action: 'AUTO_RUN_PROGRESS',
+                progress: state.progress,
+                isRunning: true
+            }).catch(() => {}); // Ignore if no listeners
         }
     }
 });
@@ -458,6 +463,21 @@ async function sendMessageToSelf(action, data = {}) {
         switch (action) {
             case 'ENSURE_WEEKLY_TAB': {
                 const result = await ensureWeeklyTab(data.spreadsheetId);
+                
+                // Update active tab immediately
+                currentActiveTab = result.tabName;
+                currentOutputSheetId = data.spreadsheetId;
+                
+                // Save to storage
+                await saveToStorage({ 
+                    activeTab: result.tabName,
+                    outputSheetId: data.spreadsheetId,
+                    currentTabName: result.tabName
+                });
+                
+                // Update queue items to use new tab
+                await updateQueueTabName(data.spreadsheetId, result.tabName);
+                
                 return { success: true, ...result };
             }
             
@@ -807,8 +827,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 // --- DATA HANDLING (Queue-Based) ---
                 case 'DATA_SCRAPED': {
                     if (currentOutputSheetId && message.rows && message.rows.length > 0) {
+                        // Refresh active tab from storage to ensure we have the latest
+                        const stored = await getFromStorage(['activeTab', 'currentTabName']);
+                        const activeTab = stored.activeTab || currentActiveTab || stored.currentTabName || currentTabName || 'Sheet1';
+                        
                         // PHASE 6: Use currentActiveTab (weekly tab) or fall back to currentTabName (manual selection)
-                        const tabName = currentActiveTab || currentTabName || 'Sheet1';
+                        const tabName = activeTab;
+                        
+                        // Update in-memory state if it was stale
+                        if (stored.activeTab && stored.activeTab !== currentActiveTab) {
+                            currentActiveTab = stored.activeTab;
+                            console.log(`[SW] Updated currentActiveTab from storage: ${currentActiveTab}`);
+                        }
+                        
                         await addToQueue(message.rows, currentOutputSheetId, tabName);
                         console.log(`[SW] Queued page ${message.pageNumber}: ${message.rows.length} rows to tab: ${tabName}`);
                     }
@@ -1060,10 +1091,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         await saveToStorage({ savedWorkbooks });
                     }
                     
+                    // Save active tab to storage immediately
                     await saveToStorage({ 
                         outputSheetId: result.spreadsheetId,
-                        activeTab: result.tabName 
+                        activeTab: result.tabName,
+                        currentTabName: result.tabName  // Also update currentTabName for compatibility
                     });
+                    
+                    // Update any pending queue items to use the new tab
+                    await updateQueueTabName(result.spreadsheetId, result.tabName);
+                    
+                    console.log(`[SW] ✅ Weekly tab "${result.tabName}" is now active. Updated queue items.`);
                     
                     response = { success: true, ...result };
                     break;

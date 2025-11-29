@@ -604,14 +604,17 @@ export async function deduplicateSheet(spreadsheetId, tabName = 'Sheet1') {
 // ============================================================
 
 /**
- * Get today's date formatted as MM_DD_YY
+ * Get today's date formatted as MM_DD_YY in Eastern Time (EST/EDT)
  * @returns {string} e.g., "11_27_25"
  */
 function getTodayTabName() {
+    // Get current time in Eastern Time (handles EST/EDT automatically)
     const now = new Date();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const year = String(now.getFullYear()).slice(-2);
+    const easternTime = new Date(now.toLocaleString("en-US", {timeZone: "America/New_York"}));
+    
+    const month = String(easternTime.getMonth() + 1).padStart(2, '0');
+    const day = String(easternTime.getDate()).padStart(2, '0');
+    const year = String(easternTime.getFullYear()).slice(-2);
     return `${month}_${day}_${year}`;
 }
 
@@ -687,18 +690,58 @@ export async function appendRowsToTab(spreadsheetId, tabName, rows) {
     
     console.log(`[SHEETS] Appending ${rows.length} rows to "${tabName}"...`);
     
-    const range = `'${tabName}'!A1`;
+    // For append operations, Google Sheets API expects: SheetName!A1 or 'SheetName'!A1
+    // Tab names with special characters (like underscores, spaces) need to be quoted
+    // Format: 'SheetName'!A1 (quotes around sheet name, then !A1)
+    const range = tabName.includes(' ') || tabName.includes('_') || tabName.includes('-') 
+        ? `'${tabName}'!A1` 
+        : `${tabName}!A1`;
     
-    const result = await apiCall(
-        `/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-        {
-            method: 'POST',
-            body: JSON.stringify({ values: rows })
+    try {
+        const result = await apiCall(
+            `/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+            {
+                method: 'POST',
+                body: JSON.stringify({ values: rows })
+            }
+        );
+        
+        console.log(`[SHEETS] ✅ Appended ${rows.length} rows to "${tabName}"`);
+        return result;
+    } catch (error) {
+        // If tab doesn't exist or range parsing fails, try to create it first
+        if (error.message && (error.message.includes('Unable to parse range') || error.message.includes('Unable to parse'))) {
+            console.log(`[SHEETS] Tab "${tabName}" might not exist or range format issue, attempting to create/verify tab...`);
+            try {
+                // Check if tab exists first
+                const tabs = await getSheetTabs(spreadsheetId);
+                const tabExists = tabs.some(tab => tab.title === tabName);
+                
+                if (!tabExists) {
+                    await createTab(spreadsheetId, tabName);
+                    await writeHeadersToTab(spreadsheetId, tabName);
+                    console.log(`[SHEETS] Created tab "${tabName}", retrying append...`);
+                } else {
+                    console.log(`[SHEETS] Tab "${tabName}" exists, retrying with corrected range format...`);
+                }
+                
+                // Retry the append with the same range format
+                const result = await apiCall(
+                    `/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+                    {
+                        method: 'POST',
+                        body: JSON.stringify({ values: rows })
+                    }
+                );
+                console.log(`[SHEETS] ✅ Appended ${rows.length} rows to "${tabName}" (after creating/verifying tab)`);
+                return result;
+            } catch (createError) {
+                console.error(`[SHEETS] Failed to create/verify tab "${tabName}":`, createError);
+                throw error; // Throw original error
+            }
         }
-    );
-    
-    console.log(`[SHEETS] Appended ${rows.length} rows to "${tabName}"`);
-    return result;
+        throw error;
+    }
 }
 
 /**

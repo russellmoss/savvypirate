@@ -94,6 +94,33 @@ export async function addToQueue(rows, spreadsheetId, tabName = 'Sheet1') {
 }
 
 /**
+ * Update all queue items for a spreadsheet to use a new tab name
+ * @param {string} spreadsheetId - The spreadsheet ID
+ * @param {string} newTabName - The new tab name to use
+ * @returns {Promise<number>} Number of items updated
+ */
+export async function updateQueueTabName(spreadsheetId, newTabName) {
+    const queue = await getQueue();
+    let updatedCount = 0;
+    
+    for (const item of queue) {
+        if (item.spreadsheetId === spreadsheetId) {
+            const oldTabName = item.tabName;
+            item.tabName = newTabName;
+            updatedCount++;
+            console.log(`[QUEUE] Updated item ${item.id} from tab "${oldTabName}" to "${newTabName}"`);
+        }
+    }
+    
+    if (updatedCount > 0) {
+        await saveQueue(queue);
+        console.log(`[QUEUE] Updated ${updatedCount} queue items to use tab "${newTabName}"`);
+    }
+    
+    return updatedCount;
+}
+
+/**
  * Process the sync queue - attempt to send pending items to Sheets
  * @returns {Promise<{synced: number, failed: number, pending: number}>}
  */
