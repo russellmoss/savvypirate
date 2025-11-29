@@ -490,6 +490,54 @@ After this step, your differential tab holds a **clean list of real advisors / R
 
 ---
 
+### AI Janitor Setup (Google Apps Script) ⚙️
+
+If you want to use the exact same AI Janitor workflow, the full script is included in this repo at:
+
+- `google-apps-script/janitor-ai.gs`
+
+You copy‑paste this into a bound Apps Script project on your Google Sheet and add your own Gemini API key.
+
+#### 7.3: Install the AI Janitor Script in Your Sheet
+
+1. **Open the target Google Sheet**
+   - This should be the sheet where your Savvy Pirate output and differential tabs live.
+2. Click **`Extensions → Apps Script`**.
+3. In the Apps Script editor:
+   - Delete any default `Code.gs` contents.
+   - Open `google-apps-script/janitor-ai.gs` in this repo.
+   - Copy all of its contents and paste into the editor.
+4. At the top of the script, find:
+   ```javascript
+   const GEMINI_API_KEY = 'INSERT_YOUR_KEY_HERE';
+   ```
+   - Replace `'INSERT_YOUR_KEY_HERE'` with your **own** Gemini API key from Google AI Studio.
+   - Keep this key **private**; do not commit it back into your repo.
+5. Click **Save** in the Apps Script editor (or `Ctrl + S`).
+
+#### 7.4: Authorize and Test the AI Janitor
+
+1. In the Apps Script editor, select the function **`testGeminiConnection`** from the function dropdown.
+2. Click **Run**:
+   - The first time, Google will prompt you to authorize the script.
+   - Approve the scopes and continue (you may see “Advanced” → “Go to project” depending on your account).
+3. If everything is set up correctly, you should see a popup in Sheets saying:
+   - `✅ API Connection Working! (gemini-2.0-flash) Response: Success`
+4. Go back to the Sheet and refresh the page.
+5. You should now see a new menu: **`🧹 Janitor AI`** in the Sheets menu bar.
+
+Once this is installed, you (or anyone else using the repo) can:
+
+- Run **`📅 Run on ALL Date Tabs`** to clean all weekly tabs.
+- Run **`📑 Clean Specific Tab...`** on a differential tab (e.g. `new_connections_week_2`).
+- Run **`▶️ Clean Selected Rows (Force)`** to manually clean a subset of rows.
+
+From there, you follow the same flow:
+
+- **Savvy Pirate** scrapes in greedy mode → **Compare Tabs** builds the differential → **AI Janitor** cleans → **Clay** enriches → **Salesforce & SGAs** execute.
+
+---
+
 ### Step 8: Enrich in Clay, Upload to Salesforce, and Allocate to SGAs
 
 Once the AI Janitor has cleaned your differential list:
