@@ -223,7 +223,8 @@ The extension needs Google OAuth credentials to access your Google Sheets. Follo
 5. **Deduplicate** → Remove duplicate entries
 6. **Compare Tabs** → Find new connections from this week (differential list)
 7. **Run AI Janitor on Differential Tab** → Remove obvious non‑advisors using Gemini
-8. **Enrich & Distribute** → Enrich clean list in Clay, upload to Salesforce, and allocate to SGAs
+8. **Enrich with BigQuery** → Get CRD numbers, AUM data, and check CRM history. Identify who's already in Salesforce (Leads/Opportunities) to decide on re-engagement vs. new prospects
+9. **Enrich & Distribute** → Enrich clean list in Clay (using CRD numbers), upload to Salesforce, and allocate to SGAs
 
 ---
 
