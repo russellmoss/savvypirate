@@ -87,7 +87,40 @@ const elements = {
     compareTab2Count: document.getElementById('compareTab2Count'),
     compareNewCount: document.getElementById('compareNewCount'),
     compareOutputTab: document.getElementById('compareOutputTab'),
-    compareError: document.getElementById('compareError')
+    compareError: document.getElementById('compareError'),
+    
+    // --- Phase 8: Source Mapping ---
+    mappingSection: document.getElementById('mappingSection'),
+    mappingStatusBar: document.getElementById('mappingStatusBar'),
+    mappedCount: document.getElementById('mappedCount'),
+    unmappedCount: document.getElementById('unmappedCount'),
+    mappingList: document.getElementById('mappingList'),
+    saveMappingBtn: document.getElementById('saveMappingBtn'),
+    clearMappingBtn: document.getElementById('clearMappingBtn'),
+    autoMapBtn: document.getElementById('autoMapBtn'),
+    
+    // --- Phase 8: Auto-Run ---
+    autoRunSection: document.getElementById('autoRunSection'),
+    selectionSummary: document.getElementById('selectionSummary'),
+    selectedSearchCount: document.getElementById('selectedSearchCount'),
+    selectedSourceCount: document.getElementById('selectedSourceCount'),
+    selectAllSearchesBtn: document.getElementById('selectAllSearchesBtn'),
+    deselectAllSearchesBtn: document.getElementById('deselectAllSearchesBtn'),
+    autoRunBtn: document.getElementById('autoRunBtn'),
+    stopAutoRunBtn: document.getElementById('stopAutoRunBtn'),
+    
+    // --- Phase 8: Auto-Run Progress ---
+    autoRunProgress: document.getElementById('autoRunProgress'),
+    autoRunTitle: document.getElementById('autoRunTitle'),
+    autoRunDetail: document.getElementById('autoRunDetail'),
+    autoRunProgressFill: document.getElementById('autoRunProgressFill'),
+    currentSourceName: document.getElementById('currentSourceName'),
+    currentSearchInfo: document.getElementById('currentSearchInfo'),
+    autoRunProfileCount: document.getElementById('autoRunProfileCount'),
+    
+    // --- Phase 8: Activity Log ---
+    autoRunLog: document.getElementById('autoRunLog'),
+    logEntries: document.getElementById('logEntries')
 };
 
 // --- STATE ---
@@ -113,7 +146,24 @@ let state = {
     
     // Phase 7: Compare Tabs
     compareTabs: [],
-    isComparing: false
+    isComparing: false,
+    
+    // PHASE 8: Auto-Run Batch Queue
+    sourceMapping: {},            // Source name → Workbook ID
+    selectedSearches: new Set(),  // Set of selected search indices
+    isAutoRunning: false,         // Batch queue running state
+    autoRunAborted: false,        // User requested abort
+    statusPollInterval: null,     // Interval ID for status polling
+    autoRunStats: {
+        totalSearches: 0,
+        completedSearches: 0,
+        totalSources: 0,
+        completedSources: 0,
+        totalProfiles: 0,
+        currentSource: null,
+        currentSearch: null,
+        startTime: null
+    }
 };
 
 let queuePollInterval = null;
@@ -125,10 +175,13 @@ function sendMessage(action, data = {}) {
         chrome.runtime.sendMessage({ action, ...data }, (response) => {
             if (chrome.runtime.lastError) {
                 reject(new Error(chrome.runtime.lastError.message));
+            } else if (!response) {
+                // Service worker might not be responding
+                reject(new Error('Service worker not responding. Try reloading the extension.'));
             } else if (response && !response.success) {
                 reject(new Error(response.error || 'Unknown error'));
             } else {
-                resolve(response);
+                resolve(response || { success: true });
             }
         });
     });
@@ -523,6 +576,7 @@ async function handleSaveWorkbook() {
             updateStatus(`✅ Saved: ${response.workbook.name}`);
             hideAddWorkbookForm();
             await loadSavedWorkbooks();
+            await renderSourceMapping(); // Phase 8: Update mapping dropdowns
             
             // Auto-select the new workbook
             if (elements.savedWorkbooksSelect) {
@@ -558,6 +612,7 @@ async function handleRemoveWorkbook() {
         handleWorkbookSelect();
         
         await loadSavedWorkbooks();
+        await renderSourceMapping(); // Phase 8: Update mapping dropdowns
     } catch (e) {
         updateStatus(`❌ ${e.message}`);
     }
@@ -674,6 +729,10 @@ async function handleDownloadFailed() {
 }
 
 // --- SEARCH LIST RENDERING ---
+/**
+ * Render search list with selection checkboxes
+ * MODIFIED for Phase 8: Added checkbox selection for auto-run
+ */
 function renderSearchList() {
     if (state.searches.length === 0) {
         elements.searchList.innerHTML = '<p class="placeholder">No searches loaded</p>';
@@ -696,10 +755,19 @@ function renderSearchList() {
         let itemClass = 'search-item';
         if (index < state.searchIndex) itemClass += ' completed';
         if (index === state.searchIndex) itemClass += ' current';
+        if (state.selectedSearches.has(index)) itemClass += ' selected';
+        
+        const isSelected = state.selectedSearches.has(index);
         
         return `
         <div class="${itemClass}" data-index="${index}">
-            <div>
+            <div class="search-checkbox-container">
+                <input type="checkbox" 
+                       class="search-checkbox" 
+                       data-index="${index}"
+                       ${isSelected ? 'checked' : ''}>
+            </div>
+            <div class="search-content">
                 <div class="name">${escapeHtml(search.source || 'Unknown')}</div>
                 <div class="title">${escapeHtml(search.title || '')}</div>
             </div>
@@ -707,21 +775,129 @@ function renderSearchList() {
         </div>
     `}).join('');
 
-    // Add click handlers
+    // Add click handlers for items
     elements.searchList.querySelectorAll('.search-item').forEach(item => {
         item.addEventListener('click', (e) => {
-            if (!e.target.classList.contains('open-btn')) {
-                selectSearch(parseInt(item.dataset.index));
+            // Don't trigger if clicking checkbox or button
+            if (e.target.classList.contains('search-checkbox') || 
+                e.target.classList.contains('open-btn')) {
+                return;
             }
+            selectSearch(parseInt(item.dataset.index));
         });
     });
 
+    // Add click handlers for open buttons
     elements.searchList.querySelectorAll('.open-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             openSearch(parseInt(btn.dataset.index));
         });
     });
+    
+    // Add change handlers for checkboxes (Phase 8)
+    elements.searchList.querySelectorAll('.search-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            e.stopPropagation();
+            handleSearchCheckboxChange(e);
+        });
+    });
+    
+    // Update selection summary
+    updateSelectionSummary();
+}
+
+/**
+ * Handle search checkbox change
+ */
+function handleSearchCheckboxChange(event) {
+    const checkbox = event.target;
+    const index = parseInt(checkbox.dataset.index);
+    const item = checkbox.closest('.search-item');
+    
+    if (checkbox.checked) {
+        state.selectedSearches.add(index);
+        if (item) {
+            item.classList.add('selected');
+        }
+    } else {
+        state.selectedSearches.delete(index);
+        if (item) {
+            item.classList.remove('selected');
+        }
+    }
+    
+    updateSelectionSummary();
+    updateAutoRunButtonState();
+}
+
+/**
+ * Select all searches for auto-run
+ */
+function selectAllSearches() {
+    state.searches.forEach((_, index) => {
+        state.selectedSearches.add(index);
+    });
+    
+    // Update checkboxes
+    if (elements.searchList) {
+        elements.searchList.querySelectorAll('.search-checkbox').forEach(cb => {
+            cb.checked = true;
+            const item = cb.closest('.search-item');
+            if (item) {
+                item.classList.add('selected');
+            }
+        });
+    }
+    
+    updateSelectionSummary();
+    updateAutoRunButtonState();
+    addLogEntry(`Selected all ${state.searches.length} searches`, 'info');
+}
+
+/**
+ * Deselect all searches
+ */
+function deselectAllSearches() {
+    state.selectedSearches.clear();
+    
+    // Update checkboxes
+    if (elements.searchList) {
+        elements.searchList.querySelectorAll('.search-checkbox').forEach(cb => {
+            cb.checked = false;
+            const item = cb.closest('.search-item');
+            if (item) {
+                item.classList.remove('selected');
+            }
+        });
+    }
+    
+    updateSelectionSummary();
+    updateAutoRunButtonState();
+    addLogEntry('Deselected all searches', 'info');
+}
+
+/**
+ * Update the selection summary display
+ */
+function updateSelectionSummary() {
+    const selectedCount = state.selectedSearches.size;
+    
+    // Count unique sources in selection
+    const selectedSources = new Set();
+    state.selectedSearches.forEach(index => {
+        const search = state.searches[index];
+        if (search) {
+            selectedSources.add(search.source || 'Unknown');
+        }
+    });
+    
+    if (elements.selectedSearchCount) {
+        elements.selectedSearchCount.textContent = selectedCount;
+    }
+    if (elements.selectedSourceCount) {
+        elements.selectedSourceCount.textContent = selectedSources.size;
+    }
 }
 
 function escapeHtml(text) {
@@ -1027,6 +1203,13 @@ async function handleLoadSearches() {
         renderSearchList();
         updateStatus(`✅ Loaded ${state.searches.length} searches`, 100);
         setConnected(true);
+        
+        // PHASE 8: Initialize selection and mapping
+        selectAllSearches();
+        
+        // Load saved mapping first, then render
+        await loadSourceMapping();
+        await renderSourceMapping(); // Phase 8: Show mapping interface
 
     } catch (error) {
         console.error('[POPUP] Load error:', error);
@@ -1639,6 +1822,937 @@ function hideCompareError() {
     }
 }
 
+// ============================================================
+// PHASE 8: SOURCE MAPPING FUNCTIONS
+// ============================================================
+
+/**
+ * Extract unique sources from searches array
+ * @param {Array} searches - Array of search objects with 'source' property
+ * @returns {Array} Array of { name, count, searches, indices } objects
+ */
+function getUniqueSources(searches) {
+    const sourceMap = new Map();
+    
+    searches.forEach((search, index) => {
+        const sourceName = search.source || 'Unknown';
+        
+        if (!sourceMap.has(sourceName)) {
+            sourceMap.set(sourceName, {
+                name: sourceName,
+                count: 0,
+                searches: [],
+                indices: []
+            });
+        }
+        
+        const sourceData = sourceMap.get(sourceName);
+        sourceData.count++;
+        sourceData.searches.push(search);
+        sourceData.indices.push(index);
+    });
+    
+    // Convert to array and sort by count (descending)
+    return Array.from(sourceMap.values())
+        .sort((a, b) => b.count - a.count);
+}
+
+/**
+ * Load source-to-workbook mapping from storage
+ * @returns {Promise<Object>} The mapping object
+ */
+async function loadSourceMapping() {
+    try {
+        const response = await sendMessage('GET_SOURCE_MAPPING');
+        
+        if (response.success) {
+            state.sourceMapping = response.mapping || {};
+            console.log(`[POPUP] Loaded source mapping: ${Object.keys(state.sourceMapping).length} entries`);
+        } else {
+            console.warn('[POPUP] Failed to load source mapping:', response.error);
+            state.sourceMapping = {};
+        }
+        
+        return state.sourceMapping;
+    } catch (error) {
+        console.error('[POPUP] Error loading source mapping:', error);
+        state.sourceMapping = {};
+        return {};
+    }
+}
+
+/**
+ * Save source-to-workbook mapping to storage
+ * @returns {Promise<boolean>} Success status
+ */
+async function saveSourceMapping() {
+    try {
+        const mapping = {};
+        
+        // Collect all mappings from dropdowns
+        const selects = elements.mappingList.querySelectorAll('.mapping-workbook-select');
+        selects.forEach(select => {
+            const sourceName = select.dataset.source;
+            const workbookId = select.value;
+            
+            if (sourceName && workbookId) {
+                mapping[sourceName] = workbookId;
+            }
+        });
+        
+        // Save to service worker
+        const response = await sendMessage('SAVE_SOURCE_MAPPING', { mapping });
+        
+        if (response.success) {
+            state.sourceMapping = response.mapping;
+            updateStatus('✅ Mapping saved!');
+            updateMappingStatusDisplay();
+            updateAutoRunButtonState();
+            addLogEntry('Mapping saved successfully', 'success');
+            return true;
+        } else {
+            throw new Error(response.error || 'Failed to save mapping');
+        }
+    } catch (error) {
+        console.error('[POPUP] Error saving mapping:', error);
+        updateStatus(`❌ Save failed: ${error.message}`);
+        addLogEntry(`Save failed: ${error.message}`, 'error');
+        return false;
+    }
+}
+
+/**
+ * Render the source mapping interface
+ */
+async function renderSourceMapping() {
+    // Check if we have searches loaded
+    if (!state.searches || state.searches.length === 0) {
+        if (elements.mappingSection) {
+            elements.mappingSection.style.display = 'none';
+        }
+        if (elements.autoRunSection) {
+            elements.autoRunSection.style.display = 'none';
+        }
+        return;
+    }
+    
+    // Show sections
+    if (elements.mappingSection) {
+        elements.mappingSection.style.display = 'block';
+    }
+    if (elements.autoRunSection) {
+        elements.autoRunSection.style.display = 'block';
+    }
+    
+    // Get unique sources
+    const uniqueSources = getUniqueSources(state.searches);
+    
+    // Load saved mapping and workbooks
+    await loadSourceMapping();
+    await loadSavedWorkbooks();
+    
+    // Check if we have any workbooks
+    if (!state.savedWorkbooks || state.savedWorkbooks.length === 0) {
+        if (elements.mappingList) {
+            elements.mappingList.innerHTML = `
+                <div class="mapping-empty-state">
+                    <p>⚠️ No saved workbooks found.</p>
+                    <p>Add workbooks in the Workbook Manager section first.</p>
+                </div>
+            `;
+        }
+        return;
+    }
+    
+    // Render mapping items
+    if (elements.mappingList) {
+        elements.mappingList.innerHTML = uniqueSources.map(source => {
+            const mappedWorkbookId = state.sourceMapping[source.name] || '';
+            const isMapped = !!mappedWorkbookId;
+            
+            return `
+                <div class="mapping-item" data-source="${escapeHtml(source.name)}">
+                    <div class="mapping-source-info">
+                        <div class="mapping-source-name" title="${escapeHtml(source.name)}">
+                            ${escapeHtml(source.name)}
+                        </div>
+                        <div class="mapping-search-count">${source.count} search${source.count !== 1 ? 'es' : ''}</div>
+                    </div>
+                    <select class="mapping-workbook-select ${isMapped ? 'mapped' : ''}" 
+                            data-source="${escapeHtml(source.name)}">
+                        <option value="">-- Select Workbook --</option>
+                        ${state.savedWorkbooks.map(wb => `
+                            <option value="${wb.id}" ${wb.id === mappedWorkbookId ? 'selected' : ''}>
+                                ${escapeHtml(wb.name || wb.sheetTitle || 'Untitled')}
+                            </option>
+                        `).join('')}
+                    </select>
+                    <span class="mapping-status-icon ${isMapped ? 'mapped' : 'unmapped'}">
+                        ${isMapped ? '✓' : '⚠'}
+                    </span>
+                </div>
+            `;
+        }).join('');
+        
+        // Add change event listeners
+        elements.mappingList.querySelectorAll('.mapping-workbook-select').forEach(select => {
+            select.addEventListener('change', handleMappingChange);
+        });
+    }
+    
+    // Update status display
+    updateMappingStatusDisplay();
+    updateAutoRunButtonState();
+}
+
+/**
+ * Handle mapping dropdown change
+ */
+function handleMappingChange(event) {
+    const select = event.target;
+    const sourceName = select.dataset.source;
+    const workbookId = select.value;
+    const item = select.closest('.mapping-item');
+    const statusIcon = item?.querySelector('.mapping-status-icon');
+    
+    // Update visual state
+    if (workbookId) {
+        select.classList.add('mapped');
+        if (statusIcon) {
+            statusIcon.textContent = '✓';
+            statusIcon.className = 'mapping-status-icon mapped';
+        }
+        state.sourceMapping[sourceName] = workbookId;
+    } else {
+        select.classList.remove('mapped');
+        if (statusIcon) {
+            statusIcon.textContent = '⚠';
+            statusIcon.className = 'mapping-status-icon unmapped';
+        }
+        delete state.sourceMapping[sourceName];
+    }
+    
+    // Update counts and button state
+    updateMappingStatusDisplay();
+    updateAutoRunButtonState();
+}
+
+/**
+ * Update mapping status counts display
+ */
+function updateMappingStatusDisplay() {
+    if (!elements.mappingList) return;
+    
+    const selects = elements.mappingList.querySelectorAll('.mapping-workbook-select');
+    let mapped = 0;
+    let unmapped = 0;
+    
+    selects.forEach(select => {
+        if (select.value) {
+            mapped++;
+        } else {
+            unmapped++;
+        }
+    });
+    
+    if (elements.mappedCount) {
+        elements.mappedCount.textContent = mapped;
+    }
+    if (elements.unmappedCount) {
+        elements.unmappedCount.textContent = unmapped;
+    }
+}
+
+/**
+ * Auto-map sources to workbooks with matching names
+ */
+async function autoMapSources() {
+    if (!state.savedWorkbooks || state.savedWorkbooks.length === 0) {
+        updateStatus('❌ No saved workbooks to auto-map');
+        return;
+    }
+    
+    let mappedCount = 0;
+    if (!elements.mappingList) return;
+    
+    const selects = elements.mappingList.querySelectorAll('.mapping-workbook-select');
+    
+    selects.forEach(select => {
+        const sourceName = select.dataset.source;
+        const sourceNameLower = sourceName.toLowerCase().trim();
+        
+        // Skip if already mapped
+        if (select.value) return;
+        
+        // Find matching workbook
+        const matchingWorkbook = state.savedWorkbooks.find(wb => {
+            const wbName = (wb.name || wb.sheetTitle || '').toLowerCase().trim();
+            return wbName === sourceNameLower || 
+                   wbName.includes(sourceNameLower) || 
+                   sourceNameLower.includes(wbName);
+        });
+        
+        if (matchingWorkbook) {
+            select.value = matchingWorkbook.id;
+            select.dispatchEvent(new Event('change'));
+            mappedCount++;
+        }
+    });
+    
+    if (mappedCount > 0) {
+        updateStatus(`✅ Auto-mapped ${mappedCount} source${mappedCount !== 1 ? 's' : ''}`);
+        addLogEntry(`Auto-mapped ${mappedCount} sources`, 'success');
+    } else {
+        updateStatus('ℹ️ No matching workbooks found');
+        addLogEntry('No matching workbooks found for auto-map', 'warning');
+    }
+}
+
+/**
+ * Clear all source mappings
+ */
+function clearSourceMapping() {
+    if (!elements.mappingList) return;
+    
+    const selects = elements.mappingList.querySelectorAll('.mapping-workbook-select');
+    
+    selects.forEach(select => {
+        select.value = '';
+        select.dispatchEvent(new Event('change'));
+    });
+    
+    state.sourceMapping = {};
+    updateMappingStatusDisplay();
+    updateAutoRunButtonState();
+    updateStatus('🗑️ Mapping cleared');
+    addLogEntry('Mapping cleared', 'info');
+}
+
+/**
+ * Add log entry to activity log (placeholder - will be enhanced in later tasks)
+ */
+function addLogEntry(message, type = 'info') {
+    if (!elements.logEntries) return;
+    
+    const timestamp = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type}`;
+    entry.innerHTML = `<span class="timestamp">[${timestamp}]</span>${escapeHtml(message)}`;
+    
+    elements.logEntries.appendChild(entry);
+    elements.logEntries.scrollTop = elements.logEntries.scrollHeight;
+    
+    // Keep only last 100 entries
+    while (elements.logEntries.children.length > 100) {
+        elements.logEntries.removeChild(elements.logEntries.firstChild);
+    }
+}
+
+/**
+ * Update auto-run button enabled/disabled state
+ */
+function updateAutoRunButtonState() {
+    if (!elements.autoRunBtn) return;
+    
+    // Check if we have selected searches and all sources are mapped
+    const hasSelectedSearches = state.selectedSearches.size > 0;
+    
+    // Get all unique sources from selected searches
+    const selectedSources = new Set();
+    state.selectedSearches.forEach(index => {
+        const search = state.searches[index];
+        if (search && search.source) {
+            selectedSources.add(search.source);
+        }
+    });
+    
+    // Check if all selected sources are mapped
+    const allSourcesMapped = Array.from(selectedSources).every(source => 
+        state.sourceMapping[source]
+    );
+    
+    const canRun = hasSelectedSearches && allSourcesMapped && !state.isAutoRunning;
+    
+    elements.autoRunBtn.disabled = !canRun;
+    
+    // Update button text to show why disabled
+    if (!hasSelectedSearches) {
+        elements.autoRunBtn.textContent = '🚀 Select Searches First';
+    } else if (!allSourcesMapped) {
+        const unmappedList = Array.from(selectedSources).filter(s => !state.sourceMapping[s]);
+        elements.autoRunBtn.textContent = `🚀 Map: ${unmappedList.join(', ')}`;
+    } else if (state.isAutoRunning) {
+        elements.autoRunBtn.textContent = '🚀 Already Running';
+    } else {
+        elements.autoRunBtn.textContent = '🚀 Auto-Run Selected';
+    }
+    
+    console.log('[POPUP] Auto-run button state:', {
+        canRun,
+        disabled: elements.autoRunBtn.disabled,
+        hasSelectedSearches,
+        allSourcesMapped,
+        isAutoRunning: state.isAutoRunning,
+        selectedSources: Array.from(selectedSources),
+        sourceMapping: state.sourceMapping
+    });
+}
+
+/**
+ * Group selected searches by source
+ * @returns {Object} Object with source names as keys, arrays of search objects as values
+ */
+function groupSelectedSearchesBySource() {
+    const grouped = {};
+    
+    state.selectedSearches.forEach(index => {
+        const search = state.searches[index];
+        if (search) {
+            const source = search.source || 'Unknown';
+            if (!grouped[source]) {
+                grouped[source] = [];
+            }
+            grouped[source].push({
+                ...search,
+                index: index
+            });
+        }
+    });
+    
+    return grouped;
+}
+
+/**
+ * Update auto-run UI from service worker progress message
+ * @param {Object} progress - Progress object from service worker
+ * @param {boolean} isRunning - Whether auto-run is still active
+ */
+function updateAutoRunProgressFromServiceWorker(progress, isRunning) {
+    if (!progress) return;
+    
+    // Update state
+    state.isAutoRunning = isRunning;
+    state.autoRunStats = {
+        ...state.autoRunStats,
+        totalSearches: progress.totalSearches || 0,
+        completedSearches: progress.completedSearches || 0,
+        totalSources: progress.totalSources || 0,
+        completedSources: progress.completedSources || 0,
+        totalProfiles: progress.totalProfiles || 0,
+        currentSource: progress.currentSource,
+        currentSearch: progress.currentSearch
+    };
+    
+    // Calculate percentage
+    const percent = progress.totalSearches > 0 
+        ? Math.round((progress.completedSearches / progress.totalSearches) * 100)
+        : 0;
+    
+    // Update UI elements
+    updateAutoRunProgress({
+        title: isRunning ? `Processing ${progress.currentSource || '...'}` : 'Complete',
+        detail: progress.currentSearch || '-',
+        currentSource: progress.currentSource || '-',
+        currentSearch: progress.currentSearch || '-',
+        profileCount: progress.totalProfiles || 0,
+        percent: percent
+    });
+    
+    // Show/hide appropriate buttons
+    if (elements.autoRunBtn) elements.autoRunBtn.style.display = isRunning ? 'none' : 'block';
+    if (elements.stopAutoRunBtn) elements.stopAutoRunBtn.style.display = isRunning ? 'block' : 'none';
+    if (elements.autoRunProgress) elements.autoRunProgress.style.display = isRunning ? 'block' : 'none';
+    
+    // If completed, show summary
+    if (!isRunning && progress.completedSearches > 0) {
+        const errors = progress.errors || [];
+        addLogEntry(`✅ Auto-run complete: ${progress.completedSearches} searches, ${progress.totalProfiles} profiles${errors.length > 0 ? `, ${errors.length} errors` : ''}`, 'success');
+    }
+}
+
+/**
+ * Calculate overall auto-run progress percentage
+ * @returns {number} Progress percentage (0-100)
+ */
+function calculateOverallProgress() {
+    const { totalSearches, completedSearches } = state.autoRunStats;
+    if (!totalSearches || totalSearches === 0) return 0;
+    return Math.round((completedSearches / totalSearches) * 100);
+}
+
+/**
+ * Update auto-run progress display
+ * @param {Object} data - Progress data object
+ */
+function updateAutoRunProgress(data) {
+    const {
+        title = 'Processing...',
+        detail = '-',
+        currentSource = '-',
+        currentSearch = '-',
+        profileCount = 0,
+        percent = 0
+    } = data;
+    
+    if (elements.autoRunTitle) {
+        elements.autoRunTitle.textContent = title;
+    }
+    if (elements.autoRunDetail) {
+        elements.autoRunDetail.textContent = detail;
+    }
+    if (elements.autoRunProgressFill) {
+        elements.autoRunProgressFill.style.width = `${percent}%`;
+    }
+    if (elements.currentSourceName) {
+        elements.currentSourceName.textContent = currentSource;
+    }
+    if (elements.currentSearchInfo) {
+        elements.currentSearchInfo.textContent = currentSearch;
+    }
+    if (elements.autoRunProfileCount) {
+        elements.autoRunProfileCount.textContent = profileCount;
+    }
+}
+
+/**
+ * Handle Auto-Run button click (POPUP SIDE)
+ * Sends config to service worker and lets it run in background
+ */
+async function handleAutoRun() {
+    console.log('[POPUP] handleAutoRun called');
+    
+    // Validate
+    const selectedSearches = Array.from(state.selectedSearches);
+    console.log('[POPUP] Selected searches:', selectedSearches.length);
+    
+    if (selectedSearches.length === 0) {
+        updateStatus('❌ No searches selected', 0);
+        addLogEntry('❌ No searches selected', 'error');
+        return;
+    }
+    
+    // Check all sources are mapped
+    const grouped = groupSelectedSearchesBySource();
+    const sources = Object.keys(grouped);
+    console.log('[POPUP] Sources:', sources);
+    console.log('[POPUP] Source mapping:', state.sourceMapping);
+    
+    const unmapped = sources.filter(s => !state.sourceMapping[s]);
+    console.log('[POPUP] Unmapped sources:', unmapped);
+    
+    if (unmapped.length > 0) {
+        const errorMsg = `❌ Unmapped sources: ${unmapped.join(', ')}`;
+        updateStatus(errorMsg, 0);
+        addLogEntry(errorMsg, 'error');
+        return;
+    }
+    
+    // Confirm with user
+    const confirmMessage = `Start auto-run?\n\n` +
+        `• ${selectedSearches.length} searches\n` +
+        `• ${sources.length} sources\n` +
+        `• Estimated time: ${Math.round(selectedSearches.length * 1.5)} minutes\n\n` +
+        `You can close this popup - processing continues in background.\n` +
+        `Reopen popup anytime to check progress.`;
+    
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+    
+    // Prepare config for service worker
+    const config = {
+        searches: selectedSearches.map(idx => ({
+            index: idx,
+            ...state.searches[idx]
+        })),
+        groupedSearches: grouped,
+        sources: sources
+    };
+    
+    // Send to service worker
+    try {
+        console.log('[POPUP] Sending START_AUTO_RUN with config:', config);
+        addLogEntry('🚀 Starting auto-run...', 'info');
+        
+        const response = await sendMessage('START_AUTO_RUN', { config });
+        console.log('[POPUP] START_AUTO_RUN response:', response);
+        
+        if (response && response.success) {
+            state.isAutoRunning = true;
+            
+            // Update UI
+            if (elements.autoRunBtn) elements.autoRunBtn.style.display = 'none';
+            if (elements.stopAutoRunBtn) elements.stopAutoRunBtn.style.display = 'block';
+            if (elements.autoRunProgress) elements.autoRunProgress.style.display = 'block';
+            if (elements.autoRunLog) elements.autoRunLog.style.display = 'block';
+            
+            addLogEntry(`📋 Processing ${selectedSearches.length} searches across ${sources.length} sources`, 'info');
+            addLogEntry('💡 You can close this popup - auto-run continues in background', 'info');
+            
+            // Start polling as backup
+            startProgressPolling();
+            
+        } else {
+            const errorMsg = response?.error || 'Unknown error';
+            addLogEntry(`❌ Failed to start: ${errorMsg}`, 'error');
+            updateStatus(`❌ ${errorMsg}`, 0);
+            
+            // If error is "already in progress", try to clear stale state
+            if (errorMsg.includes('already in progress')) {
+                addLogEntry('🔄 Attempting to clear stale state...', 'warning');
+                const cleared = await forceClearAutoRunState();
+                if (cleared) {
+                    addLogEntry('✅ Stale state cleared. Try starting auto-run again.', 'success');
+                    updateStatus('✅ Stale state cleared. Click Auto-Run again.', 0);
+                } else {
+                    addLogEntry('⚠️ Could not clear stale state. Try reloading the extension.', 'warning');
+                }
+            }
+        }
+        
+    } catch (error) {
+        console.error('[POPUP] Auto-run start error:', error);
+        const errorMsg = error.message || 'Unknown error';
+        addLogEntry(`❌ Error: ${errorMsg}`, 'error');
+        
+        // If error is "already in progress", try to clear stale state
+        if (errorMsg.includes('already in progress')) {
+            addLogEntry('🔄 Attempting to clear stale state...', 'warning');
+            const cleared = await forceClearAutoRunState();
+            if (cleared) {
+                addLogEntry('✅ Stale state cleared. Try starting auto-run again.', 'success');
+                updateStatus('✅ Stale state cleared. Click Auto-Run again.', 0);
+            }
+        }
+    }
+}
+
+/**
+ * Handle Stop button click
+ */
+async function handleStopAutoRun() {
+    try {
+        addLogEntry('⏹️ Requesting stop...', 'warning');
+        
+        const response = await sendMessage('STOP_AUTO_RUN');
+        
+        if (response && response.success) {
+            addLogEntry('⏹️ Stop requested - will stop after current scrape completes', 'warning');
+            // Update UI state optimistically
+            state.isAutoRunning = false;
+            if (elements.autoRunBtn) elements.autoRunBtn.style.display = 'block';
+            if (elements.stopAutoRunBtn) elements.stopAutoRunBtn.style.display = 'none';
+        } else {
+            addLogEntry(`❌ Stop failed: ${response?.error || 'Unknown error'}`, 'error');
+        }
+        
+    } catch (error) {
+        console.error('[POPUP] Stop error:', error);
+        const errorMsg = error.message || 'Unknown error';
+        addLogEntry(`❌ Error: ${errorMsg}`, 'error');
+        
+        // Even if message failed, try to update UI optimistically
+        // The polling will eventually catch up with the actual state
+        state.isAutoRunning = false;
+        if (elements.autoRunBtn) elements.autoRunBtn.style.display = 'block';
+        if (elements.stopAutoRunBtn) elements.stopAutoRunBtn.style.display = 'none';
+    }
+}
+
+/**
+ * Force clear stale auto-run state
+ * Called when user encounters "already in progress" error
+ */
+async function forceClearAutoRunState() {
+    try {
+        console.log('[POPUP] Force clearing auto-run state...');
+        addLogEntry('🔄 Clearing stale auto-run state...', 'warning');
+        
+        // Send a message to clear the state
+        const clearResponse = await sendMessage('CLEAR_AUTO_RUN_STATE').catch(() => null);
+        
+        if (clearResponse && clearResponse.success) {
+            // Wait a moment for state to clear
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            // Check status again to verify
+            const statusResponse = await sendMessage('GET_AUTO_RUN_STATUS').catch(() => null);
+            
+            if (statusResponse && !statusResponse.isRunning) {
+                addLogEntry('✅ Cleared stale auto-run state', 'success');
+                state.isAutoRunning = false;
+                resetAutoRunUI();
+                return true;
+            }
+        }
+        
+        // Fallback: try stop then check
+        await sendMessage('STOP_AUTO_RUN').catch(() => null);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const statusResponse = await sendMessage('GET_AUTO_RUN_STATUS').catch(() => null);
+        if (statusResponse && !statusResponse.isRunning) {
+            addLogEntry('✅ Cleared stale auto-run state (via stop)', 'success');
+            state.isAutoRunning = false;
+            resetAutoRunUI();
+            return true;
+        }
+        
+        return false;
+    } catch (error) {
+        console.error('[POPUP] Error force clearing state:', error);
+        return false;
+    }
+}
+
+/**
+ * Start polling service worker for auto-run status
+ */
+function startStatusPolling() {
+    // Clear any existing polling
+    if (state.statusPollInterval) {
+        clearInterval(state.statusPollInterval);
+    }
+    
+    // Poll every 2 seconds
+    state.statusPollInterval = setInterval(async () => {
+        try {
+            const status = await sendMessage('GET_AUTO_RUN_STATUS');
+            
+            if (!status.success) {
+                console.error('[POPUP] Error getting status:', status.error);
+                return;
+            }
+            
+            // Update UI from status
+            updateAutoRunProgressFromStatus(status);
+            
+            // If not running, stop polling
+            if (!status.isRunning) {
+                stopStatusPolling();
+                
+                if (status.isAborted) {
+                    addLogEntry('⏹️ Auto-run stopped by user', 'warning');
+                } else {
+                    addLogEntry('✅ Auto-run completed!', 'success');
+                    const progress = status.progress || {};
+                    addLogEntry(`📊 Total: ${progress.totalProfiles || 0} profiles scraped`, 'success');
+                }
+            }
+            
+        } catch (error) {
+            console.error('[POPUP] Error polling status:', error);
+        }
+    }, 2000); // Poll every 2 seconds
+}
+
+/**
+ * Stop polling for status
+ */
+function stopStatusPolling() {
+    if (state.statusPollInterval) {
+        clearInterval(state.statusPollInterval);
+        state.statusPollInterval = null;
+    }
+}
+
+/**
+ * Update progress display from service worker status
+ */
+function updateAutoRunProgressFromStatus(status) {
+    const progress = status.progress || {};
+    
+    const percent = progress.percent || 0;
+    const currentSource = progress.currentSource || '-';
+    const currentSearch = progress.currentSearch || '-';
+    const totalProfiles = progress.totalProfiles || 0;
+    const completedSearches = progress.completedSearches || 0;
+    const totalSearches = progress.totalSearches || 0;
+    
+    // Update progress bar
+    if (elements.autoRunProgressFill) {
+        elements.autoRunProgressFill.style.width = `${percent}%`;
+    }
+    
+    // Update text displays
+    if (elements.autoRunTitle) {
+        elements.autoRunTitle.textContent = status.isRunning 
+            ? `Processing... ${completedSearches}/${totalSearches} searches`
+            : 'Completed';
+    }
+    
+    if (elements.autoRunDetail) {
+        elements.autoRunDetail.textContent = status.isRunning
+            ? `${currentSource} - ${currentSearch}`
+            : 'All searches completed';
+    }
+    
+    if (elements.currentSourceName) {
+        elements.currentSourceName.textContent = currentSource;
+    }
+    
+    if (elements.currentSearchInfo) {
+        elements.currentSearchInfo.textContent = currentSearch;
+    }
+    
+    if (elements.autoRunProfileCount) {
+        elements.autoRunProfileCount.textContent = totalProfiles;
+    }
+}
+
+/**
+ * Check for running or recently completed auto-run
+ * Called on popup init to reconnect to background processing
+ */
+async function checkAutoRunStatus() {
+    try {
+        const response = await sendMessage('GET_AUTO_RUN_STATUS');
+        
+        if (!response.success) {
+            console.log('[POPUP] No auto-run status available');
+            // Reset UI state - no auto-run active
+            resetAutoRunUI();
+            return;
+        }
+        
+        const { isRunning, isAborted, progress, percent } = response;
+        
+        console.log('[POPUP] Auto-run status check:', { isRunning, isAborted, hasProgress: !!progress });
+        
+        // If marked as aborted or not actually running, reset UI
+        if (isAborted || !isRunning) {
+            console.log('[POPUP] Auto-run is not active, resetting UI');
+            state.isAutoRunning = false;
+            resetAutoRunUI();
+            
+            // If there's progress data, show completion summary
+            if (progress && progress.completedSearches > 0 && !isAborted) {
+                // Show completion UI
+                if (elements.autoRunSection) elements.autoRunSection.style.display = 'block';
+                if (elements.autoRunProgress) elements.autoRunProgress.style.display = 'block';
+                if (elements.autoRunLog) elements.autoRunLog.style.display = 'block';
+                
+                // Calculate elapsed time
+                const elapsed = progress.startTime 
+                    ? formatElapsedTime(Date.now() - progress.startTime)
+                    : 'unknown';
+                
+                // Show completion summary
+                updateAutoRunProgress({
+                    title: '✅ Auto-Run Complete',
+                    detail: `Finished in ${elapsed}`,
+                    currentSource: '-',
+                    currentSearch: '-',
+                    profileCount: progress.totalProfiles || 0,
+                    percent: 100
+                });
+                
+                const errors = progress.errors || [];
+                addLogEntry(`✅ Completed: ${progress.completedSearches} searches, ${progress.totalProfiles} profiles, ${errors.length} errors`, 'success');
+                
+                if (errors.length > 0) {
+                    addLogEntry(`⚠️ Errors: ${errors.slice(0, 5).join(', ')}${errors.length > 5 ? '...' : ''}`, 'warning');
+                }
+            }
+            return;
+        }
+        
+        // Auto-run is actually running - show UI and start polling
+        if (isRunning) {
+            console.log('[POPUP] Reconnecting to running auto-run');
+            state.isAutoRunning = true;
+            
+            // Show progress UI
+            if (elements.autoRunSection) elements.autoRunSection.style.display = 'block';
+            if (elements.autoRunProgress) elements.autoRunProgress.style.display = 'block';
+            if (elements.autoRunLog) elements.autoRunLog.style.display = 'block';
+            if (elements.autoRunBtn) elements.autoRunBtn.style.display = 'none';
+            if (elements.stopAutoRunBtn) elements.stopAutoRunBtn.style.display = 'block';
+            
+            // Update progress display
+            updateAutoRunProgressFromServiceWorker(progress, true);
+            
+            addLogEntry('🔄 Reconnected to running auto-run', 'info');
+            
+            // Start polling for updates (backup for missed messages)
+            startProgressPolling();
+        }
+        
+    } catch (error) {
+        console.error('[POPUP] Error checking auto-run status:', error);
+        // On error, reset UI to safe state
+        resetAutoRunUI();
+    }
+}
+
+/**
+ * Reset auto-run UI to default state (not running)
+ */
+function resetAutoRunUI() {
+    state.isAutoRunning = false;
+    
+    // Show start button, hide stop button
+    if (elements.autoRunBtn) {
+        elements.autoRunBtn.style.display = 'block';
+        elements.autoRunBtn.disabled = false; // Will be updated by updateAutoRunButtonState
+    }
+    if (elements.stopAutoRunBtn) {
+        elements.stopAutoRunBtn.style.display = 'none';
+    }
+    
+    // Hide progress if no searches loaded or no active run
+    if (elements.autoRunProgress && (!state.searches || state.searches.length === 0)) {
+        elements.autoRunProgress.style.display = 'none';
+    }
+    
+    // Update button state based on current selections
+    updateAutoRunButtonState();
+}
+
+/**
+ * Start polling for progress updates (backup mechanism)
+ */
+function startProgressPolling() {
+    // Poll every 5 seconds as backup
+    const pollInterval = setInterval(async () => {
+        if (!state.isAutoRunning) {
+            clearInterval(pollInterval);
+            return;
+        }
+        
+        try {
+            const response = await sendMessage('GET_AUTO_RUN_STATUS');
+            if (response.success) {
+                updateAutoRunProgressFromServiceWorker(response.progress, response.isRunning);
+                
+                if (!response.isRunning) {
+                    state.isAutoRunning = false;
+                    clearInterval(pollInterval);
+                }
+            }
+        } catch (error) {
+            console.error('[POPUP] Polling error:', error);
+        }
+    }, 5000);
+}
+
+/**
+ * Format elapsed time in human-readable format
+ */
+function formatElapsedTime(ms) {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+        return `${hours}h ${minutes % 60}m`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds % 60}s`;
+    } else {
+        return `${seconds}s`;
+    }
+}
+
 // --- MESSAGE LISTENER ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[POPUP] Received:', message.action);
@@ -1666,6 +2780,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     // Show smart navigation panel
                     showNextSearchPanel(message);
                     updateStatus(`🎉 Complete! ${message.totalProfiles} profiles`, 100);
+                    break;
+                    
+                case 'AUTO_RUN_PROGRESS':
+                    console.log('[POPUP] Received progress update:', message);
+                    if (message.progress) {
+                        updateAutoRunProgressFromServiceWorker(message.progress, message.isRunning);
+                    }
                     break;
             }
         } catch (error) {
@@ -1761,6 +2882,9 @@ async function init() {
     renderSearchList();
     updateActionButtons();
     
+    // Phase 8: Check for running auto-run and reconnect
+    await checkAutoRunStatus();
+    
     if (!state.isScrapingActive) {
         updateStatus('Ready');
     }
@@ -1834,6 +2958,34 @@ async function init() {
     elements.compareTab1?.addEventListener('change', updateCompareButtonState);
     elements.compareTab2?.addEventListener('change', updateCompareButtonState);
     elements.compareOutputName?.addEventListener('input', updateCompareButtonState);
+    
+    // Phase 8: Source Mapping event listeners
+    elements.saveMappingBtn?.addEventListener('click', saveSourceMapping);
+    elements.clearMappingBtn?.addEventListener('click', clearSourceMapping);
+    elements.autoMapBtn?.addEventListener('click', autoMapSources);
+    
+    // Phase 8: Auto-Run selection event listeners
+    elements.selectAllSearchesBtn?.addEventListener('click', selectAllSearches);
+    elements.deselectAllSearchesBtn?.addEventListener('click', deselectAllSearches);
+    
+    // Phase 8: Auto-Run event listeners
+    if (elements.autoRunBtn) {
+        console.log('[POPUP] Attaching autoRunBtn click handler');
+        elements.autoRunBtn.addEventListener('click', (e) => {
+            console.log('[POPUP] Auto-run button clicked!');
+            e.preventDefault();
+            e.stopPropagation();
+            if (!elements.autoRunBtn.disabled) {
+                handleAutoRun();
+            } else {
+                console.log('[POPUP] Button is disabled, cannot start auto-run');
+                addLogEntry('⚠️ Button is disabled - check selections and mappings', 'warning');
+            }
+        });
+    }
+    if (elements.stopAutoRunBtn) {
+        elements.stopAutoRunBtn.addEventListener('click', handleStopAutoRun);
+    }
     
     elements.openOutputSheet.addEventListener('click', (e) => {
         e.preventDefault();

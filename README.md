@@ -32,6 +32,7 @@ You're competing with "Taylor Smith" for financial advisor leads. You want to kn
 - 🔄 **Resilient Sync**: Data saved locally first, syncs when online (survives WiFi drops)
 - 🗑️ **Deduplication**: Remove duplicate rows based on Name column with one click
 - 🔄 **Tab Comparison**: Compare weekly scrapes to identify new connections (Phase 7)
+- 🧹 **AI Janitor Cleanup (Google Apps Script)**: Post-process differential lists with Gemini AI to remove non-advisors
 - 🏴‍☠️ **Pirate Theme**: Dark, stylish UI with black and red color scheme
 
 ---
@@ -52,10 +53,10 @@ Before installing, make sure you have:
 ### Step 1: Get the Extension Files
 
 **Option A: Clone from Repository**
-```bash
-git clone https://github.com/russellmoss/savvypirate.git
-cd savvypirate
-```
+   ```bash
+   git clone https://github.com/russellmoss/savvypirate.git
+   cd savvypirate
+   ```
 
 **Option B: Download ZIP**
 - Download the repository as a ZIP file
@@ -173,9 +174,11 @@ The extension needs Google OAuth credentials to access your Google Sheets. Follo
 1. **Create Input Sheet** → Define your competitor searches
 2. **Load Searches** → Import searches into the extension
 3. **Set Up Workbooks** → Create workbooks for each competitor
-4. **Scrape Data** → Run weekly scrapes
+4. **Scrape Data (Greedy Mode)** → Capture all profiles from LinkedIn search
 5. **Deduplicate** → Remove duplicate entries
-6. **Compare Tabs** → Find new connections from this week
+6. **Compare Tabs** → Find new connections from this week (differential list)
+7. **Run AI Janitor on Differential Tab** → Remove obvious non‑advisors using Gemini
+8. **Enrich & Distribute** → Enrich clean list in Clay, upload to Salesforce, and allocate to SGAs
 
 ---
 
@@ -325,6 +328,8 @@ When you start scraping:
 2. Repeat the scraping process
 3. Continue until all searches are complete
 
+> 🧲 **Important:** The scraper now runs in **greedy mode** — it intentionally pulls in *all* profiles from your LinkedIn search results (including some that aren’t RIAs / Financial Advisors). You will clean these later using the AI Janitor script on the differential tab.
+
 ---
 
 ### Step 5: Deduplicate Data 🗑️
@@ -441,6 +446,67 @@ Here's a typical weekly workflow:
 5. ✅ Output: `new_connections_week_2`
 6. ✅ Review new connections
 7. ✅ Target new prospects!
+
+---
+
+### Step 7: Run the AI Janitor on the Differential Tab 🧹
+
+At this point you have a **differential tab** (e.g. `new_connections_week_2`) with people who just entered your competitor’s funnel. This list still includes some noise (teachers, nurses, trades, etc.). The **AI Janitor** (a Google Apps Script that uses Gemini) cleans that up for you.
+
+#### 7.1: What the AI Janitor Does
+
+- Works directly **inside Google Sheets** as a custom menu (`🧹 Janitor AI`)
+- Looks at:
+  - **Name**
+  - **Title**
+  - **Accreditation columns (G–L)** – e.g. CFP, CFA, ChFC, etc.
+- Applies three layers of logic:
+  - **Golden Tickets (Auto-Keep)**: If accreditations like `CFP`, `CFA`, `ChFC`, etc. appear in columns G–L, the row is instantly kept as a legit advisor.
+  - **Kill List (Auto-Reject)**: Obvious non‑advisor roles (e.g. Postman, Teacher, Nurse, Driver, Janitor, Trades, etc.) are rejected and moved out without calling AI.
+  - **Gemini AI Review (Ambiguous Cases)**: For everything in the gray area, Gemini (`MODEL_NAME = 'gemini-2.0-flash'`) classifies the profile as **Keep / Reject**, with:
+    - `AI_Status` (Yes/No)
+    - `AI_Category` (e.g. “Accredited Advisor”, “Insurance‑Only”, “Trade”, etc.)
+    - `AI_Reasoning` (short explanation)
+
+Rejected rows are moved into a separate archive tab (`Janitor_Trash_Bin`) so you can always review what was removed.
+
+#### 7.2: How to Run the AI Janitor on a Differential Tab
+
+1. Open your Google Sheet that contains the **differential tab** (e.g. `new_connections_week_2`).
+2. Make sure the tab has standard Savvy Pirate columns (A–F) and any accreditation columns (G–L).
+3. In the Google Sheet menu bar, click **`🧹 Janitor AI`**.
+4. Choose one of:
+   - **`▶️ Clean Selected Rows (Force)`** – run only on the currently selected rows.
+   - **`📑 Clean Specific Tab...`** – enter the differential tab name (e.g. `new_connections_week_2`) to clean the whole tab.
+   - **`📅 Run on ALL Date Tabs`** – bulk clean every dated tab like `11_27_25`, `12_04_25`, etc.
+5. The script:
+   - Adds `AI_Status`, `AI_Category`, `AI_Reasoning` columns if missing.
+   - Auto‑keeps accredited advisors.
+   - Auto‑rejects obvious non‑advisors.
+   - Sends ambiguous titles to Gemini for smart classification.
+   - Moves rejected rows into `Janitor_Trash_Bin`.
+
+After this step, your differential tab holds a **clean list of real advisors / RIAs**.
+
+---
+
+### Step 8: Enrich in Clay, Upload to Salesforce, and Allocate to SGAs
+
+Once the AI Janitor has cleaned your differential list:
+
+1. **Export / connect the clean tab to Clay**
+   - Use Clay to enrich each advisor with additional data (emails, firm, AUM signals, etc.).
+2. **Upload the enriched list to Salesforce**
+   - Import as Leads / Contacts depending on your CRM model.
+3. **Allocate to SGAs (Sales Growth Advisors)**
+   - Use your routing rules (territory, team, seniority) to assign leads from the clean, enriched list.
+4. **Sales execution**
+   - SGAs work the list knowing:
+     - These people **just entered a competitor’s funnel**
+     - They are **already filtered** to real advisor‑type profiles
+
+This completes the full loop:
+- **Scrape (Savvy Pirate in greedy mode) → Differential (Compare Tabs) → Clean (AI Janitor) → Enrich (Clay) → Sell (Salesforce + SGAs).**
 
 ---
 

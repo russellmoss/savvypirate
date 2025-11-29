@@ -39,6 +39,107 @@
             </div>
         </section>
 
+        <!-- Source Mapping Section (NEW - Phase 8) -->
+        <section class="section mapping-section" id="mappingSection" style="display: none;">
+            <h2>🔗 Source → Workbook Mapping</h2>
+            <p class="section-description">
+                Map each Source Connection to its destination workbook. All sources must be mapped before Auto-Run.
+            </p>
+            
+            <!-- Mapping Status -->
+            <div class="mapping-status-bar" id="mappingStatusBar">
+                <span class="mapped-count">Mapped: <strong id="mappedCount">0</strong></span>
+                <span class="unmapped-count">Unmapped: <strong id="unmappedCount">0</strong></span>
+            </div>
+            
+            <!-- Mapping List Container -->
+            <div class="mapping-list" id="mappingList">
+                <!-- Dynamically populated with source → workbook dropdowns -->
+                <p class="placeholder">Load searches to see sources</p>
+            </div>
+            
+            <!-- Mapping Actions -->
+            <div class="mapping-actions">
+                <button id="saveMappingBtn" class="btn btn-primary btn-small">
+                    💾 Save Mapping
+                </button>
+                <button id="clearMappingBtn" class="btn btn-secondary btn-small">
+                    🗑️ Clear All
+                </button>
+                <button id="autoMapBtn" class="btn btn-secondary btn-small" title="Auto-match sources to workbooks with same name">
+                    🔮 Auto-Map
+                </button>
+            </div>
+        </section>
+
+        <!-- Auto-Run Section (NEW - Phase 8) -->
+        <section class="section auto-run-section" id="autoRunSection" style="display: none;">
+            <h2>🚀 Auto-Run Batch Queue</h2>
+            
+            <!-- Selection Summary -->
+            <div class="selection-summary" id="selectionSummary">
+                <div class="summary-item">
+                    <span class="label">Selected Searches:</span>
+                    <span class="value" id="selectedSearchCount">0</span>
+                </div>
+                <div class="summary-item">
+                    <span class="label">Sources to Process:</span>
+                    <span class="value" id="selectedSourceCount">0</span>
+                </div>
+            </div>
+            
+            <!-- Auto-Run Controls -->
+            <div class="auto-run-controls">
+                <button id="selectAllSearchesBtn" class="btn btn-secondary btn-small">
+                    ☑️ Select All
+                </button>
+                <button id="deselectAllSearchesBtn" class="btn btn-secondary btn-small">
+                    ☐ Deselect All
+                </button>
+            </div>
+            
+            <button id="autoRunBtn" class="btn btn-primary btn-large" disabled>
+                🚀 Auto-Run Selected
+            </button>
+            
+            <button id="stopAutoRunBtn" class="btn btn-danger btn-large" style="display: none;">
+                ⏹️ Stop Auto-Run
+            </button>
+            
+            <!-- Auto-Run Progress -->
+            <div class="auto-run-progress" id="autoRunProgress" style="display: none;">
+                <div class="progress-header">
+                    <span class="progress-title" id="autoRunTitle">Processing...</span>
+                    <span class="progress-detail" id="autoRunDetail">-</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-fill" id="autoRunProgressFill" style="width: 0%;"></div>
+                </div>
+                <div class="progress-stats">
+                    <div class="stat">
+                        <span class="stat-label">Source:</span>
+                        <span class="stat-value" id="currentSourceName">-</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Search:</span>
+                        <span class="stat-value" id="currentSearchInfo">-</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Profiles Scraped:</span>
+                        <span class="stat-value" id="autoRunProfileCount">0</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Auto-Run Log -->
+            <div class="auto-run-log" id="autoRunLog" style="display: none;">
+                <h4>Activity Log</h4>
+                <div class="log-entries" id="logEntries">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+        </section>
+
         <!-- Workbook Manager Section (NEW - Phase 6) -->
         <section class="section workbook-section">
             <h2>📚 Workbook Manager</h2>

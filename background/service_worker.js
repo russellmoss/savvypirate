@@ -21,6 +21,17 @@ let currentSearchIndex = 0;
 let currentActiveTab = null;        // The MM_DD_YY tab name we're writing to (weekly runs)
 let savedWorkbooks = [];            // Array of { id, name, sheetTitle, lastUsed, lastTab, addedAt }
 
+// PHASE 8: Source Mapping State
+let sourceMapping = {};    // Source Connection → Workbook ID mapping
+
+// PHASE 8: Auto-Run State
+let autoRunState = {
+    isRunning: false,
+    isAborted: false,
+    config: null,
+    progress: null
+};
+
 // --- ALARMS ---
 const KEEPALIVE_ALARM = 'keepalive-alarm';
 const QUEUE_PROCESS_ALARM = 'queue-process-alarm';
@@ -62,6 +73,28 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         } catch (e) {
             console.error('[SW] Queue process error:', e);
         }
+    } else if (alarm.name === 'AUTO_RUN_KEEPALIVE') {
+        console.log('[SW] Keep-alive alarm fired');
+        
+        // Check if auto-run is still active
+        const stored = await getFromStorage(['autoRunState']);
+        const state = stored.autoRunState;
+        
+        if (!state?.isRunning) {
+            // Auto-run finished or was stopped, clear the alarm
+            console.log('[SW] Auto-run not active, clearing keep-alive alarm');
+            chrome.alarms.clear('AUTO_RUN_KEEPALIVE');
+            return;
+        }
+        
+        // Log current progress to keep worker active
+        // Also send progress update to popup if it's open
+        console.log(`[SW] Auto-run progress: ${state.progress?.completedSearches || 0}/${state.progress?.totalSearches || 0} searches`);
+        
+        // Send progress update to popup (if open)
+        if (state.progress) {
+            sendAutoRunProgressUpdate(state.progress, true);
+        }
     }
 });
 
@@ -87,6 +120,491 @@ async function getFromStorage(keys) {
                 resolve(result);
             }
         });
+    });
+}
+
+// ============================================================
+// PHASE 8: AUTO-RUN STATE MANAGEMENT
+// ============================================================
+
+/**
+ * Update auto-run state and persist to storage
+ * @param {Object} updates - Partial state updates
+ */
+async function updateAutoRunState(updates) {
+    autoRunState = { ...autoRunState, ...updates };
+    await saveToStorage({ autoRunState });
+    
+    // Notify popup if it's listening (non-blocking)
+    chrome.runtime.sendMessage({
+        action: 'AUTO_RUN_PROGRESS',
+        progress: autoRunState.progress,
+        isRunning: autoRunState.isRunning
+    }).catch(() => {}); // Ignore if no listeners
+}
+
+/**
+ * Main auto-run queue processor (runs in background)
+ * Processes searches grouped by source, switching workbooks automatically
+ */
+async function processAutoRunQueue() {
+    console.log('[SW] Starting auto-run queue processor');
+    
+    try {
+        // Load current state
+        const stored = await getFromStorage(['autoRunState', 'sourceMapping']);
+        let state = stored.autoRunState;
+        const mapping = stored.sourceMapping || {};
+        
+        if (!state || !state.isRunning) {
+            console.log('[SW] Auto-run not active, exiting');
+            return;
+        }
+        
+        const { config, progress } = state;
+        const { sources, groupedSearches } = config;
+        
+        // Process each source group
+        for (let sourceIndex = progress.currentSourceIndex; sourceIndex < sources.length; sourceIndex++) {
+            // Check for abort
+            const currentState = await getFromStorage(['autoRunState']);
+            if (currentState.autoRunState?.isAborted) {
+                console.log('[SW] Auto-run aborted by user');
+                await updateAutoRunState({ 
+                    isRunning: false, 
+                    isAborted: true 
+                });
+                chrome.alarms.clear('AUTO_RUN_KEEPALIVE');
+                return;
+            }
+            
+            const sourceName = sources[sourceIndex];
+            const workbookId = mapping[sourceName];
+            
+            if (!workbookId) {
+                console.error(`[SW] No workbook mapped for source: ${sourceName}`);
+                await updateAutoRunState({
+                    progress: {
+                        ...progress,
+                        errors: [...(progress.errors || []), `No workbook mapped for ${sourceName}`]
+                    }
+                });
+                continue;
+            }
+            
+            // Update progress
+            await updateAutoRunState({
+                progress: {
+                    ...progress,
+                    currentSourceIndex: sourceIndex,
+                    currentSource: sourceName,
+                    currentSearchIndex: 0
+                }
+            });
+            
+            // Process this source group
+            const searches = groupedSearches[sourceName] || [];
+            await processSourceGroup(sourceName, workbookId, searches, sourceIndex);
+            
+            // Update completed sources count
+            const updatedState = await getFromStorage(['autoRunState']);
+            const updatedProgress = updatedState.autoRunState.progress;
+            await updateAutoRunState({
+                progress: {
+                    ...updatedProgress,
+                    completedSources: updatedProgress.completedSources + 1
+                }
+            });
+            
+            // Delay between sources (60 seconds)
+            if (sourceIndex < sources.length - 1) {
+                console.log('[SW] Waiting 60 seconds before next source...');
+                await new Promise(resolve => setTimeout(resolve, 60000));
+            }
+        }
+        
+        // All done!
+        console.log('[SW] Auto-run completed successfully');
+        await updateAutoRunState({ 
+            isRunning: false,
+            progress: {
+                ...progress,
+                currentSource: null,
+                currentSearch: null
+            }
+        });
+        chrome.alarms.clear('AUTO_RUN_KEEPALIVE');
+        
+    } catch (error) {
+        console.error('[SW] Auto-run error:', error);
+        const freshState = await getFromStorage(['autoRunState']);
+        const currentProgress = freshState.autoRunState?.progress || {};
+        const currentErrors = currentProgress.errors || [];
+        
+        await updateAutoRunState({ 
+            isRunning: false,
+            progress: {
+                ...currentProgress,
+                errors: [...currentErrors, `Fatal: ${error.message}`]
+            }
+        });
+        chrome.alarms.clear('AUTO_RUN_KEEPALIVE');
+    }
+}
+
+/**
+ * Process all searches for a single source
+ * @param {string} sourceName - Source connection name
+ * @param {string} workbookId - Target workbook ID
+ * @param {Array} searches - Array of search objects with url, title, index
+ * @param {number} sourceIndex - Index of this source in the overall queue
+ */
+async function processSourceGroup(sourceName, workbookId, searches, sourceIndex) {
+    console.log(`[SW] Processing source: ${sourceName} (${searches.length} searches)`);
+    
+    try {
+        // Step 1: Activate workbook and ensure weekly tab
+        const tabResult = await sendMessageToSelf('ENSURE_WEEKLY_TAB', {
+            spreadsheetId: workbookId
+        });
+        
+        if (!tabResult.success) {
+            throw new Error(tabResult.error || 'Failed to ensure weekly tab');
+        }
+        
+        const tabName = tabResult.tabName;
+        console.log(`[SW] Using tab: ${tabName} for ${sourceName}`);
+        
+        // Set as active output
+        await sendMessageToSelf('SET_ACTIVE_TAB', {
+            spreadsheetId: workbookId,
+            tabName: tabName
+        });
+        
+        // Step 2: Find or create LinkedIn tab
+        let linkedInTab = await findLinkedInTab();
+        if (!linkedInTab) {
+            console.log('[SW] No LinkedIn tab found, creating one...');
+            linkedInTab = await chrome.tabs.create({ 
+                url: 'https://www.linkedin.com/feed/',
+                active: true  // Make active to ensure proper loading
+            });
+            
+            // Wait for tab to fully load
+            await waitForTabLoad(linkedInTab.id, 30000);
+            console.log('[SW] LinkedIn tab created and loaded');
+        } else {
+            console.log(`[SW] Using existing LinkedIn tab: ${linkedInTab.id}`);
+        }
+        
+        // Step 3: Process each search
+        const state = await getFromStorage(['autoRunState']);
+        let progress = state.autoRunState.progress;
+        
+        for (let i = 0; i < searches.length; i++) {
+            // Check for abort
+            const currentState = await getFromStorage(['autoRunState']);
+            if (currentState.autoRunState?.isAborted) {
+                console.log('[SW] Aborted during source processing');
+                return;
+            }
+            
+            const search = searches[i];
+            const searchNum = i + 1;
+            
+            // Update progress
+            await updateAutoRunState({
+                progress: {
+                    ...progress,
+                    currentSearchIndex: i,
+                    currentSearch: `${search.title} (${searchNum}/${searches.length})`
+                }
+            });
+            
+            console.log(`[SW] Processing search ${searchNum}/${searches.length}: ${search.title}`);
+            
+            try {
+                // Navigate to LinkedIn URL and make tab active so user can see it
+                await chrome.tabs.update(linkedInTab.id, { 
+                    url: search.url,
+                    active: true  // Make tab active so user can see the navigation
+                });
+                
+                // Bring window to front
+                try {
+                    const tab = await chrome.tabs.get(linkedInTab.id);
+                    if (tab.windowId) {
+                        await chrome.windows.update(tab.windowId, { focused: true });
+                    }
+                } catch (e) {
+                    console.warn('[SW] Could not bring window to front:', e);
+                }
+                
+                // Wait for page load
+                await waitForTabLoad(linkedInTab.id);
+                
+                // Ensure content script is injected
+                await ensureContentScript(linkedInTab.id);
+                
+                // Wait for scraping completion (set up listener BEFORE starting)
+                console.log(`[SW] Setting up completion listener for search ${searchNum}...`);
+                const completionPromise = waitForScrapingComplete();
+                
+                // Small delay to ensure listener is registered
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Start scraping
+                console.log(`[SW] Sending START_SCRAPING to tab ${linkedInTab.id}...`);
+                await chrome.tabs.sendMessage(linkedInTab.id, {
+                    action: 'START_SCRAPING',
+                    sourceName: sourceName
+                });
+                
+                // Wait for completion
+                console.log(`[SW] Waiting for scraping to complete...`);
+                const completionData = await completionPromise;
+                console.log(`[SW] Scraping completed: ${completionData.totalProfiles} profiles`);
+                
+                // Update progress
+                progress = (await getFromStorage(['autoRunState'])).autoRunState.progress;
+                await updateAutoRunState({
+                    progress: {
+                        ...progress,
+                        completedSearches: progress.completedSearches + 1,
+                        totalProfiles: progress.totalProfiles + (completionData.totalProfiles || 0)
+                    }
+                });
+                
+                console.log(`[SW] ✅ Completed search: ${completionData.totalProfiles} profiles`);
+                
+                // Delay before next search (30-60 seconds, random)
+                // Use shorter chunks to keep service worker alive
+                if (i < searches.length - 1) {
+                    const totalDelay = 30000 + Math.random() * 30000; // 30-60 seconds
+                    const chunkDelay = 5000; // 5 second chunks
+                    const chunks = Math.ceil(totalDelay / chunkDelay);
+                    console.log(`[SW] Waiting ${Math.round(totalDelay/1000)}s before next search (${chunks} chunks)...`);
+                    
+                    // Wait in chunks to keep service worker active
+                    for (let chunk = 0; chunk < chunks; chunk++) {
+                        // Check for abort between chunks
+                        const currentState = await getFromStorage(['autoRunState']);
+                        if (currentState.autoRunState?.isAborted) {
+                            console.log('[SW] Aborted during delay');
+                            return;
+                        }
+                        
+                        await new Promise(resolve => setTimeout(resolve, chunkDelay));
+                    }
+                    
+                    console.log(`[SW] Delay complete, continuing to next search...`);
+                }
+                
+            } catch (error) {
+                console.error(`[SW] Error processing search ${searchNum}:`, error);
+                const freshState = await getFromStorage(['autoRunState']);
+                const currentProgress = freshState.autoRunState?.progress || {};
+                const currentErrors = currentProgress.errors || [];
+                
+                await updateAutoRunState({
+                    progress: {
+                        ...currentProgress,
+                        errors: [...currentErrors, `${sourceName} - ${search.title}: ${error.message}`]
+                    }
+                });
+                // Continue to next search
+            }
+        }
+        
+        // Step 4: Deduplicate workbook after all searches
+        console.log(`[SW] Deduplicating workbook for ${sourceName}...`);
+        const dedupeResult = await sendMessageToSelf('DEDUPLICATE_SHEET', {
+            spreadsheetId: workbookId,
+            tabName: tabName
+        });
+        
+        if (dedupeResult.success) {
+            console.log(`[SW] ✅ Deduplicated: removed ${dedupeResult.removedCount || 0} duplicates`);
+        } else {
+            console.error(`[SW] Deduplication failed:`, dedupeResult.error);
+        }
+        
+    } catch (error) {
+        console.error(`[SW] Error processing source ${sourceName}:`, error);
+        const freshState = await getFromStorage(['autoRunState']);
+        const currentProgress = freshState.autoRunState?.progress || {};
+        const currentErrors = currentProgress.errors || [];
+        
+        await updateAutoRunState({
+            progress: {
+                ...currentProgress,
+                errors: [...currentErrors, `${sourceName}: ${error.message}`]
+            }
+        });
+    }
+}
+
+/**
+ * Call internal handler functions directly (we're in the service worker)
+ * This avoids message-passing complexity for internal operations
+ * @param {string} action - The action to perform
+ * @param {Object} data - Parameters for the action
+ * @returns {Promise<Object>} Result object with success status
+ */
+async function sendMessageToSelf(action, data = {}) {
+    console.log(`[SW] Internal call: ${action}`);
+    
+    try {
+        switch (action) {
+            case 'ENSURE_WEEKLY_TAB': {
+                const result = await ensureWeeklyTab(data.spreadsheetId);
+                return { success: true, ...result };
+            }
+            
+            case 'SET_ACTIVE_TAB': {
+                currentOutputSheetId = data.spreadsheetId;
+                currentTabName = data.tabName;
+                await saveToStorage({ 
+                    outputSheetId: data.spreadsheetId,
+                    currentTabName: data.tabName
+                });
+                return { success: true };
+            }
+            
+            case 'DEDUPLICATE_SHEET': {
+                const result = await deduplicateSheet(data.spreadsheetId, data.tabName);
+                return { success: true, removedCount: result.removedCount || 0 };
+            }
+            
+            case 'GET_ACTIVE_OUTPUT': {
+                return { 
+                    success: true, 
+                    spreadsheetId: currentOutputSheetId,
+                    tabName: currentTabName 
+                };
+            }
+            
+            default:
+                console.warn(`[SW] Unknown internal action: ${action}`);
+                return { success: false, error: `Unknown action: ${action}` };
+        }
+    } catch (error) {
+        console.error(`[SW] Internal call failed (${action}):`, error);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * Find existing LinkedIn tab
+ * @returns {Promise<chrome.tabs.Tab|null>}
+ */
+async function findLinkedInTab() {
+    try {
+        const tabs = await chrome.tabs.query({ url: 'https://www.linkedin.com/*' });
+        return tabs.length > 0 ? tabs[0] : null;
+    } catch (error) {
+        console.error('[SW] Error finding LinkedIn tab:', error);
+        return null;
+    }
+}
+
+/**
+ * Wait for tab to finish loading
+ * @param {number} tabId - Chrome tab ID
+ * @param {number} timeoutMs - Maximum wait time in milliseconds
+ * @returns {Promise<void>}
+ */
+async function waitForTabLoad(tabId, timeoutMs = 60000) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            clearInterval(checkInterval);
+            reject(new Error('Tab load timeout'));
+        }, timeoutMs);
+        
+        const checkInterval = setInterval(async () => {
+            try {
+                const tab = await chrome.tabs.get(tabId);
+                if (tab.status === 'complete') {
+                    clearInterval(checkInterval);
+                    clearTimeout(timeout);
+                    // Additional wait for dynamic content
+                    await new Promise(r => setTimeout(r, 3000));
+                    resolve();
+                }
+            } catch (e) {
+                clearInterval(checkInterval);
+                clearTimeout(timeout);
+                reject(e);
+            }
+        }, 500);
+    });
+}
+
+/**
+ * Ensure content script is injected in tab
+ * @param {number} tabId - Chrome tab ID
+ * @returns {Promise<boolean>}
+ */
+async function ensureContentScript(tabId) {
+    try {
+        // Try to send a ping message
+        await chrome.tabs.sendMessage(tabId, { action: 'PING' });
+        return true;
+    } catch (error) {
+        // Content script not injected, inject it
+        try {
+            await chrome.scripting.executeScript({
+                target: { tabId },
+                files: ['content/content.js']
+            });
+            // Wait a bit for script to initialize
+            await new Promise(r => setTimeout(r, 1000));
+            return true;
+        } catch (injectError) {
+            console.error('[SW] Failed to inject content script:', injectError);
+            return false;
+        }
+    }
+}
+
+/**
+ * Wait for scraping completion notification
+ * @param {number} timeoutMs - Maximum wait time (default: 10 minutes)
+ * @returns {Promise<Object>} Completion data
+ */
+function waitForScrapingComplete(timeoutMs = 600000) {
+    return new Promise((resolve, reject) => {
+        let resolved = false;
+        
+        const timeout = setTimeout(() => {
+            if (!resolved) {
+                resolved = true;
+                chrome.runtime.onMessage.removeListener(listener);
+                reject(new Error('Scraping timeout after 10 minutes'));
+            }
+        }, timeoutMs);
+        
+        const listener = (message, sender, sendResponse) => {
+            // Listen for the completion messages from content script
+            if ((message.action === 'SEARCH_COMPLETE' || message.action === 'SCRAPING_COMPLETE') && !resolved) {
+                resolved = true;
+                clearTimeout(timeout);
+                chrome.runtime.onMessage.removeListener(listener);
+                
+                console.log('[SW] Received scraping completion:', message.totalProfiles, 'profiles');
+                
+                resolve({
+                    totalProfiles: message.totalProfiles || 0,
+                    totalPages: message.totalPages || 0
+                });
+            }
+            
+            // Return true to indicate we might send a response asynchronously
+            return true;
+        };
+        
+        chrome.runtime.onMessage.addListener(listener);
+        console.log('[SW] Registered completion listener for SEARCH_COMPLETE/SCRAPING_COMPLETE');
     });
 }
 
@@ -300,6 +818,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 // --- SEARCH COMPLETION & SMART NAVIGATION ---
                 case 'SEARCH_COMPLETE':
                 case 'SCRAPING_COMPLETE': {
+                    // Check if auto-run is active - if so, let waitForScrapingComplete handle it
+                    const autoRunCheck = await getFromStorage(['autoRunState']);
+                    if (autoRunCheck.autoRunState?.isRunning) {
+                        console.log('[SW] SCRAPING_COMPLETE received during auto-run - handled by waitForScrapingComplete');
+                        // Still process queue and send notification, but don't advance manually
+                        stopKeepAlive();
+                        await processQueue();
+                        
+                        // Notify popup (but don't advance - auto-run handles that)
+                        chrome.runtime.sendMessage({
+                            action: 'NOTIFY_COMPLETE',
+                            totalProfiles: message.totalProfiles,
+                            totalPages: message.totalPages,
+                            nextSearch: null // Auto-run handles navigation
+                        }).catch(() => {});
+                        
+                        response = { success: true, handled: 'auto-run' };
+                        break;
+                    }
+                    
+                    // Manual scraping mode - handle normally
                     stopKeepAlive();
                     console.log(`[SW] Search complete: ${message.totalProfiles} profiles`);
                     
@@ -550,6 +1089,230 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     break;
                 }
                 
+                // ============================================================
+                // PHASE 8: SOURCE MAPPING & BATCH QUEUE
+                // ============================================================
+                
+                case 'GET_SOURCE_MAPPING': {
+                    try {
+                        const stored = await getFromStorage(['sourceMapping']);
+                        sourceMapping = stored.sourceMapping || {};
+                        console.log(`[SW] Loaded source mapping with ${Object.keys(sourceMapping).length} entries`);
+                        response = { success: true, mapping: sourceMapping };
+                    } catch (error) {
+                        console.error('[SW] Error loading source mapping:', error);
+                        response = { success: false, error: error.message, mapping: {} };
+                    }
+                    break;
+                }
+                
+                case 'SAVE_SOURCE_MAPPING': {
+                    try {
+                        const newMapping = message.mapping || {};
+                        
+                        // Validate mapping structure
+                        for (const [source, workbookId] of Object.entries(newMapping)) {
+                            if (typeof source !== 'string' || typeof workbookId !== 'string') {
+                                throw new Error('Invalid mapping structure: keys and values must be strings');
+                            }
+                        }
+                        
+                        // Save to storage
+                        await saveToStorage({ sourceMapping: newMapping });
+                        
+                        // Update in-memory cache
+                        sourceMapping = newMapping;
+                        
+                        console.log(`[SW] Saved source mapping: ${Object.keys(sourceMapping).length} entries`);
+                        response = { success: true, mapping: sourceMapping };
+                    } catch (error) {
+                        console.error('[SW] Error saving source mapping:', error);
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+                
+                case 'START_AUTO_RUN': {
+                    try {
+                        // Check if already running - verify with alarm check
+                        const stored = await getFromStorage(['autoRunState']);
+                        const alarm = await chrome.alarms.get('AUTO_RUN_KEEPALIVE');
+                        
+                        // If state says running, check if it's actually running
+                        if (stored.autoRunState?.isRunning) {
+                            // Check if alarm exists - if not, it's stale
+                            if (!alarm) {
+                                console.log('[SW] Detected stale auto-run state on START (no alarm), clearing...');
+                                const clearedState = { isRunning: false, isAborted: false, config: null, progress: null };
+                                await saveToStorage({ autoRunState: clearedState });
+                                autoRunState = clearedState;
+                                // Clear any existing alarm just in case
+                                await chrome.alarms.clear('AUTO_RUN_KEEPALIVE');
+                            } else {
+                                // Alarm exists - check if it's actually running by checking progress
+                                // If progress hasn't updated in 5 minutes, it's likely stale
+                                const progress = stored.autoRunState.progress || {};
+                                const lastUpdate = progress.startTime || 0;
+                                const timeSinceStart = Date.now() - lastUpdate;
+                                
+                                // If started more than 5 minutes ago and no progress, might be stale
+                                // But if it's been aborted, allow new start
+                                if (stored.autoRunState.isAborted) {
+                                    console.log('[SW] Previous auto-run was aborted, allowing new start');
+                                    // Clear the aborted state
+                                    const clearedState = { isRunning: false, isAborted: false, config: null, progress: null };
+                                    await saveToStorage({ autoRunState: clearedState });
+                                    autoRunState = clearedState;
+                                    await chrome.alarms.clear('AUTO_RUN_KEEPALIVE');
+                                } else if (timeSinceStart > 300000 && progress.completedSearches === 0) {
+                                    // Started 5+ minutes ago with no progress - likely stale
+                                    console.log('[SW] Detected stale auto-run state (no progress for 5+ min), clearing...');
+                                    const clearedState = { isRunning: false, isAborted: false, config: null, progress: null };
+                                    await saveToStorage({ autoRunState: clearedState });
+                                    autoRunState = clearedState;
+                                    await chrome.alarms.clear('AUTO_RUN_KEEPALIVE');
+                                } else {
+                                    // Actually running - reject
+                                    response = { success: false, error: 'Auto-run is already in progress' };
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        const { config } = message;
+                        if (!config || !config.sources || !config.groupedSearches) {
+                            response = { success: false, error: 'Invalid auto-run configuration' };
+                            break;
+                        }
+                        
+                        // Validate all sources are mapped
+                        const unmapped = config.sources.filter(s => !sourceMapping[s]);
+                        if (unmapped.length > 0) {
+                            response = { success: false, error: `Unmapped sources: ${unmapped.join(', ')}` };
+                            break;
+                        }
+                        
+                        // Initialize state
+                        const initialState = {
+                            isRunning: true,
+                            isAborted: false,
+                            config: config,
+                            progress: {
+                                currentSourceIndex: 0,
+                                currentSearchIndex: 0,
+                                totalSources: config.sources.length,
+                                totalSearches: config.searches.length,
+                                completedSearches: 0,
+                                completedSources: 0,
+                                totalProfiles: 0,
+                                currentSource: null,
+                                currentSearch: null,
+                                startTime: Date.now(),
+                                errors: []
+                            }
+                        };
+                        
+                        // Save to storage
+                        await saveToStorage({ autoRunState: initialState });
+                        autoRunState = initialState;
+                        
+                        // Start keep-alive alarm (keeps service worker alive)
+                        // Use more frequent alarm during active processing (every 10 seconds)
+                        chrome.alarms.create('AUTO_RUN_KEEPALIVE', { periodInMinutes: 0.167 }); // Every 10 seconds
+                        
+                        // Start processing in background (don't await)
+                        processAutoRunQueue().catch(error => {
+                            console.error('[SW] Auto-run error:', error);
+                            // Update state to show error
+                            updateAutoRunState({ isRunning: false, error: error.message });
+                        });
+                        
+                        console.log('[SW] Auto-run started');
+                        response = { success: true, message: 'Auto-run started in background' };
+                        
+                    } catch (error) {
+                        console.error('[SW] Error starting auto-run:', error);
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+                
+                case 'STOP_AUTO_RUN': {
+                    try {
+                        autoRunState.isAborted = true;
+                        await saveToStorage({ 
+                            autoRunState: { ...autoRunState, isAborted: true }
+                        });
+                        console.log('[SW] Auto-run stop requested');
+                        response = { success: true, message: 'Stop requested - will stop after current scrape' };
+                    } catch (error) {
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+                
+                case 'CLEAR_AUTO_RUN_STATE': {
+                    try {
+                        console.log('[SW] Force clearing auto-run state...');
+                        // Clear alarm
+                        await chrome.alarms.clear('AUTO_RUN_KEEPALIVE');
+                        
+                        // Clear state
+                        const clearedState = {
+                            isRunning: false,
+                            isAborted: false,
+                            config: null,
+                            progress: null
+                        };
+                        await saveToStorage({ autoRunState: clearedState });
+                        autoRunState = clearedState;
+                        
+                        console.log('[SW] Auto-run state cleared');
+                        response = { success: true, message: 'Auto-run state cleared' };
+                    } catch (error) {
+                        console.error('[SW] Error clearing auto-run state:', error);
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+                
+                case 'GET_AUTO_RUN_STATUS': {
+                    try {
+                        const stored = await getFromStorage(['autoRunState']);
+                        let state = stored.autoRunState || { isRunning: false };
+                        
+                        // Check if keep-alive alarm is still active
+                        // If state says running but alarm is gone, it's stale
+                        const alarm = await chrome.alarms.get('AUTO_RUN_KEEPALIVE');
+                        if (state.isRunning && !alarm) {
+                            console.log('[SW] Detected stale auto-run state (alarm missing), clearing...');
+                            // Clear stale state
+                            state = { isRunning: false, isAborted: false, config: null, progress: null };
+                            await saveToStorage({ autoRunState: state });
+                            autoRunState = state;
+                        }
+                        
+                        // Calculate progress percentage
+                        const progress = state.progress || {};
+                        const percent = progress.totalSearches > 0 
+                            ? Math.round((progress.completedSearches / progress.totalSearches) * 100)
+                            : 0;
+                        
+                        response = {
+                            success: true,
+                            isRunning: state.isRunning || false,
+                            isAborted: state.isAborted || false,
+                            progress: {
+                                ...progress,
+                                percent: percent
+                            }
+                        };
+                    } catch (error) {
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+                
                 default:
                     response = { success: false, error: `Unknown action: ${action}` };
             }
@@ -574,12 +1337,38 @@ chrome.runtime.onInstalled.addListener(() => {
 // Load settings and start queue processor on startup
 (async () => {
     try {
-        const settings = await getFromStorage(['outputSheetId', 'currentTabName', 'searchIndex', 'savedWorkbooks', 'activeTab']);
+        const settings = await getFromStorage([
+            'outputSheetId', 
+            'currentTabName', 
+            'searchIndex', 
+            'savedWorkbooks', 
+            'activeTab',
+            'sourceMapping',
+            'autoRunState'
+        ]);
         currentOutputSheetId = settings.outputSheetId || null;
         currentTabName = settings.currentTabName || 'Sheet1';
         currentSearchIndex = settings.searchIndex || 0;
         savedWorkbooks = settings.savedWorkbooks || [];
         currentActiveTab = settings.activeTab || null;
+        sourceMapping = settings.sourceMapping || {};
+        autoRunState = settings.autoRunState || {
+            isRunning: false,
+            isAborted: false,
+            config: null,
+            progress: null
+        };
+        
+        // Resume auto-run if it was running when extension reloaded
+        if (autoRunState.isRunning && !autoRunState.isAborted) {
+            console.log('[SW] Resuming auto-run after reload');
+            chrome.alarms.create('AUTO_RUN_KEEPALIVE', { periodInMinutes: 0.3 });
+            processAutoRunQueue().catch(error => {
+                console.error('[SW] Auto-run resume error:', error);
+                updateAutoRunState({ isRunning: false, error: error.message });
+            });
+        }
+        
         startQueueProcessor(); // Ensure queue processor runs
         console.log('[SW] Service worker initialized');
     } catch (error) {
