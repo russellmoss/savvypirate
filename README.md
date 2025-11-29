@@ -77,6 +77,7 @@ Savvy Pirate is architected to eliminate the four primary "fingerprints" that Li
 - 🗑️ **Deduplication**: Remove duplicate rows based on Name column with one click
 - 🔄 **Tab Comparison**: Compare weekly scrapes to identify new connections (Phase 7)
 - 🧹 **AI Janitor Cleanup (Google Apps Script)**: Post-process differential lists with Gemini AI to remove non-advisors
+- 💎 **BigQuery Enrichment (Google Apps Script)**: Enrich cleaned lists with CRD numbers, AUM data, and CRM history. Automatically checks if prospects are already in Salesforce (Leads/Opportunities) and provides links to records, dispositions, and closed reasons
 - 🏴‍☠️ **Pirate Theme**: Dark, stylish UI with black and red color scheme
 
 ---
