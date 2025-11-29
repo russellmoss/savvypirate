@@ -60,7 +60,9 @@ Savvy Pirate is architected to eliminate the four primary "fingerprints" that Li
 | **TLS Fingerprint** | Node.js/Python Script | Native Chrome Browser |
 | **Browser Type** | Headless (Detectable) | Headful (Legitimate) |
 | **Login Event** | New Device / New Location | Reuses Active Session |
-| **Cost** | Subscription + Sales Nav | Free / Standard LinkedIn |
+| **Cost** | LinkedIn Subscription ($45-60/mo) + PhantomBuster ($56-128/mo) = **$101-188/month** | LinkedIn Professional Basic ($45-60/mo) only = **$45-60/month** |
+
+> 💡 **Note**: Both tools require a LinkedIn Professional subscription to access sufficient search results. Savvy Pirate only needs LinkedIn, while PhantomBuster requires both LinkedIn and their own service subscription.
 
 ---
 
