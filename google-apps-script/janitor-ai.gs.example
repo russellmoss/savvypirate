@@ -1,0 +1,377 @@
+// ==========================================
+// PHASE 10: "THE SMART JANITOR" (Accreditation Aware)
+// ==========================================
+
+const GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY_HERE'; 
+
+// "gemini-1.5-flash" is fastest/best for paid tier processing.
+// "gemini-1.5-pro" is smarter but slower. 
+const MODEL_NAME = 'gemini-2.0-flash'; 
+
+const AI_HEADERS = ['AI_Status', 'AI_Category', 'AI_Reasoning'];
+const CLEANED_ARCHIVE_TAB = 'Janitor_Trash_Bin'; 
+
+// === 1. GOLDEN TICKETS (Auto-Keep) ===
+// If any of these appear in columns G-L, we KEEP them instantly. No AI needed.
+const GOLDEN_KEYWORDS = [
+  "CFP", "CERTIFIED FINANCIAL PLANNER", 
+  "CFA", "Chartered Financial Analyst",
+  "ChFC", "Chartered Financial Consultant",
+  "CIMA", "CPWA", "PFS", "AIF", "CEPA", "CLU",
+  "Wealth", "Advisor", "Financial Planner" // Keywords in accreditation cols usually mean legit
+];
+
+// === 2. KILL LIST (Auto-Reject) ===
+const INSTANT_KILL_KEYWORDS = [
+  "Postman", "USPS", "Crime Fighter", "Teacher", "Student", "Driver", "Trucking", 
+  "Uber", "Lyft", "DoorDash", "Delivery", "Nurse", "Doctor", "Physician", 
+  "Pastor", "Reverend", "Clerk", "Cashier", "Barista", "Waiter", "Server", 
+  "Cleaner", "Janitor", "Custodian", "Electrician", "Plumber", "HVAC", 
+  "Carpenter", "Painter", "Mechanic", "Technician", "Security Guard", 
+  "Police", "Firefighter", "EMT", "Paramedic", "Soldier", "Army", "Navy"
+];
+
+// === 3. AI CONTEXT (For the vague stuff left over) ===
+const BLACKLIST_CONTEXT = `
+  1. INSURANCE: State Farm, Allstate, Farmers, Liberty Mutual, Claims, Adjuster.
+  2. REAL ESTATE: Realtor, Mortgage, Loan Officer, Escrow, Title, Leasing.
+  3. TRADES: Construction, Pest Control, Handyman, Landscaping.
+  4. NON-FINANCE: HR, Recruiter, Marketing, Software Engineer, IT, Support.
+`;
+
+// =======================
+// MENU & TRIGGERS
+// =======================
+
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('🧹 Janitor AI')
+    .addItem('▶️ Clean Selected Rows (Force)', 'cleanSelectedRows')
+    .addItem('📑 Clean Specific Tab...', 'cleanSpecificTab')
+    .addItem('📅 Run on ALL Date Tabs', 'runTheJanitor')
+    .addSeparator()
+    .addItem('💎 Run BigQuery Enrichment', 'runBigQueryEnrichment') // <--- NEW BUTTON
+    .addSeparator()
+    .addItem('🔌 Test API Connection', 'testGeminiConnection')
+    .addToUi();
+}
+
+function runTheJanitor() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  const dateTabRegex = /^\d{2}_\d{2}_\d{2}$/;
+  sheets.forEach(sheet => {
+    if (dateTabRegex.test(sheet.getName())) {
+      processSheet(sheet, false); 
+      SpreadsheetApp.flush(); 
+      archiveBadLeads(sheet); 
+    }
+  });
+}
+
+// =======================
+// ACTIONS
+// =======================
+
+function cleanSelectedRows() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  const ui = SpreadsheetApp.getUi();
+  const selection = sheet.getActiveRange();
+  
+  const startRow = selection.getRow();
+  const numRows = selection.getNumRows();
+  
+  if (startRow < 2) {
+    ui.alert("⚠️ Please select data rows (not the header).");
+    return;
+  }
+
+  ss.toast(`Analyzing ${numRows} row(s)...`);
+  
+  // Clear previous status
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const statusIdx = headers.indexOf('AI_Status');
+  if (statusIdx > -1) {
+    sheet.getRange(startRow, statusIdx + 1, numRows, 3).clearContent();
+    SpreadsheetApp.flush();
+  }
+
+  const stats = processSheet(sheet, true, startRow, numRows);
+  SpreadsheetApp.flush(); 
+  const movedCount = archiveBadLeads(sheet);
+  
+  ui.alert(`✅ Analysis Complete.\n\n👍 Kept: ${stats.kept}\n👎 Rejected: ${stats.removed}\n\n🗑️ Moved to Trash Bin: ${movedCount}`);
+}
+
+function cleanSpecificTab() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const result = ui.prompt('Clean Specific Tab', 'Enter tab name (e.g. "11_28_25"):', ui.ButtonSet.OK_CANCEL);
+
+  if (result.getSelectedButton() == ui.Button.OK) {
+    const tabName = result.getResponseText().trim();
+    const sheet = ss.getSheetByName(tabName);
+    if (sheet) {
+      ss.toast(`Found ${tabName}. Starting fast cleanup...`);
+      const stats = processSheet(sheet, false); 
+      SpreadsheetApp.flush();
+      const moved = archiveBadLeads(sheet);
+      
+      if (stats.total === 0 && moved === 0) {
+        ui.alert(`⚠️ Finished but processed 0 rows.\nCheck if rows are already marked in 'AI_Status' column.`);
+      } else {
+        ui.alert(`✅ Complete!\nProcessed: ${stats.total}\nKept: ${stats.kept}\nRemoved: ${moved}`);
+      }
+    } else {
+      ui.alert(`❌ Tab "${tabName}" not found.`);
+    }
+  }
+}
+
+// =======================
+// CORE LOGIC
+// =======================
+
+function processSheet(sheet, forceAll = false, startRowOverride = null, numRowsOverride = null) {
+  const lastCol = sheet.getLastColumn();
+  
+  // 1. Setup Headers
+  const headerRange = sheet.getRange(1, 1, 1, lastCol);
+  const headers = headerRange.getValues()[0];
+  let aiStatusColIndex = headers.indexOf('AI_Status');
+  
+  if (aiStatusColIndex === -1) {
+    sheet.getRange(1, lastCol + 1, 1, AI_HEADERS.length).setValues([AI_HEADERS]);
+    SpreadsheetApp.flush();
+    aiStatusColIndex = lastCol;
+  }
+
+  // 2. DYNAMIC COLUMN FINDER
+  let TITLE_IDX = headers.findIndex(h => h.match(/Title|Position/i));
+  let NAME_IDX = headers.findIndex(h => h.match(/Name/i));
+  if (TITLE_IDX === -1) TITLE_IDX = 2; // Default C
+  if (NAME_IDX === -1) NAME_IDX = 1;   // Default B
+
+  // 3. Define Range
+  const start = startRowOverride || 2;
+  const totalRows = sheet.getLastRow();
+  const count = numRowsOverride || (totalRows - 1);
+  if (count <= 0) return { total: 0, kept: 0, removed: 0 };
+
+  // Read data (include Accreditations G-L, approx cols 6-11)
+  const dataRange = sheet.getRange(start, 1, count, sheet.getLastColumn());
+  const data = dataRange.getValues();
+  
+  let stats = { total: 0, kept: 0, removed: 0 };
+  let batch = [];
+  const BATCH_SIZE = 25; // Increased batch size for Paid Tier speed
+
+  for (let i = 0; i < data.length; i++) {
+    const currentRowStatus = (data[i].length > aiStatusColIndex) ? data[i][aiStatusColIndex] : "";
+    
+    if (!forceAll && currentRowStatus !== "") {
+        if (String(currentRowStatus).toLowerCase().startsWith("y")) stats.kept++;
+        if (String(currentRowStatus).toLowerCase().startsWith("n")) stats.removed++;
+        continue; 
+    }
+
+    const rowTitle = String(data[i][TITLE_IDX]);
+    const rowName = data[i][NAME_IDX];
+    const rowNum = start + i;
+
+    // --- A. GOLDEN TICKET CHECK (Accreditations) ---
+    // Scan columns G(6) through L(11) for Accreditations
+    let isAccredited = false;
+    let foundAccreditation = "";
+    
+    // Check Columns 6 through 11 (approx G-L). 
+    // Adjust max index if your sheet is narrower/wider.
+    const scanEnd = Math.min(12, data[i].length); 
+    for(let c = 6; c < scanEnd; c++) {
+      const cellVal = String(data[i][c]).toUpperCase();
+      for (const golden of GOLDEN_KEYWORDS) {
+        if (cellVal.includes(golden.toUpperCase())) {
+          isAccredited = true;
+          foundAccreditation = golden;
+          break;
+        }
+      }
+      if (isAccredited) break;
+    }
+
+    // IF ACCREDITED: Keep instantly (Skip AI)
+    if (isAccredited) {
+      sheet.getRange(rowNum, aiStatusColIndex + 1, 1, 3).setValues([["Yes", "Accredited Advisor", `Found '${foundAccreditation}'`]]);
+      stats.total++;
+      stats.kept++;
+      continue; // Skip to next row
+    }
+
+    // --- B. LOCAL KILL CHECK ---
+    if (!rowTitle) continue;
+    const lowerTitle = rowTitle.toLowerCase();
+    let instantKill = false;
+    for (const badWord of INSTANT_KILL_KEYWORDS) {
+      if (lowerTitle.includes(badWord.toLowerCase())) {
+        sheet.getRange(rowNum, aiStatusColIndex + 1, 1, 3).setValues([["No", "Blacklisted (Local)", `Matched '${badWord}'`]]);
+        stats.total++;
+        stats.removed++;
+        instantKill = true;
+        break;
+      }
+    }
+    if (instantKill) continue;
+
+    // --- C. AI BATCHING (Only for the ambiguous ones) ---
+    batch.push({ rowIndex: rowNum, name: rowName, title: rowTitle });
+
+    if (batch.length >= BATCH_SIZE) {
+      SpreadsheetApp.getActiveSpreadsheet().toast(`AI Checking batch... (Row ${rowNum})`);
+      
+      const batchStats = analyzeBatch(sheet, batch, aiStatusColIndex + 1);
+      stats.total += batchStats.total;
+      stats.kept += batchStats.kept;
+      stats.removed += batchStats.removed;
+      batch = [];
+      
+      SpreadsheetApp.flush();
+      // Paid Tier Speed: Lower sleep time (e.g. 500ms)
+      Utilities.sleep(500); 
+    }
+  }
+
+  // Final Batch
+  if (batch.length > 0) {
+    const batchStats = analyzeBatch(sheet, batch, aiStatusColIndex + 1);
+    stats.total += batchStats.total;
+    stats.kept += batchStats.kept;
+    stats.removed += batchStats.removed;
+  }
+  
+  return stats;
+}
+
+function analyzeBatch(sheet, batchRows, colStart) {
+  let batchStats = { total: 0, kept: 0, removed: 0 };
+  
+  const prompt = `
+  Role: Expert Recruiter.
+  Task: Classify these LinkedIn Profiles.
+  GOAL: Find Financial Advisors / Wealth Managers.
+  
+  RULES:
+  1. REJECT (No) Insurance-only, Trades, Medical, Education, Support.
+  2. REJECT (No) nonsense titles like "Crime Fighter".
+  3. KEEP (Yes) if the title is ambiguous but sounds like a professional service or owner ("Managing Director", "Principal") AND DOES NOT match the reject list.
+  4. KEEP (Yes) vague titles like "Relieving Financial Anxiety" if it implies financial planning.
+
+  ${BLACKLIST_CONTEXT}
+
+  Input: ${JSON.stringify(batchRows.map(r => ({ id: r.rowIndex, title: r.title })))}
+  
+  Output JSON: [{"id": 12, "Keep": "Yes/No", "Category": "CategoryName", "Reason": "Short reason"}]
+  `;
+
+  try {
+    const response = callGemini(prompt);
+    const cleanJson = response.replace(/```json/g, '').replace(/```/g, '').trim();
+    const results = JSON.parse(cleanJson);
+
+    results.forEach(res => {
+      sheet.getRange(res.id, colStart, 1, 3).setValues([[res.Keep, res.Category, res.Reason]]);
+      batchStats.total++;
+      const val = String(res.Keep).toLowerCase();
+      if (val.startsWith("y")) batchStats.kept++;
+      if (val.startsWith("n")) batchStats.removed++;
+    });
+  } catch (e) {
+    Logger.log("Error in batch: " + e.toString());
+  }
+  return batchStats;
+}
+
+function archiveBadLeads(sourceSheet) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let archiveSheet = ss.getSheetByName(CLEANED_ARCHIVE_TAB);
+  if (!archiveSheet) {
+    archiveSheet = ss.insertSheet(CLEANED_ARCHIVE_TAB);
+    const headers = sourceSheet.getRange(1, 1, 1, sourceSheet.getLastColumn()).getValues();
+    headers[0].push("Original_Tab_Source");
+    archiveSheet.getRange(1, 1, 1, headers[0].length).setValues(headers);
+  }
+
+  const lastRow = sourceSheet.getLastRow();
+  const lastCol = sourceSheet.getLastColumn();
+  const headers = sourceSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const statusIdx = headers.indexOf('AI_Status');
+
+  if (statusIdx === -1) return 0;
+
+  const data = sourceSheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  let rowsToMove = [];
+  let rowsToDeleteIndices = [];
+
+  for (let i = 0; i < data.length; i++) {
+    const status = String(data[i][statusIdx]).toLowerCase().trim();
+    if (status.startsWith("no") || status === "false" || status.includes("blacklisted")) {
+      let rowData = [...data[i]];
+      rowData.push(sourceSheet.getName());
+      rowsToMove.push(rowData);
+      rowsToDeleteIndices.push(i + 2);
+    }
+  }
+
+  if (rowsToMove.length > 0) {
+    archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, rowsToMove.length, rowsToMove[0].length).setValues(rowsToMove);
+    rowsToDeleteIndices.sort((a, b) => b - a);
+    rowsToDeleteIndices.forEach(idx => sourceSheet.deleteRow(idx));
+  }
+  return rowsToMove.length;
+}
+
+function callGemini(prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${GEMINI_API_KEY}`;
+  const payload = { "contents": [{ "parts": [{"text": prompt}] }] };
+  const options = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(payload), 'muteHttpExceptions': true };
+  const response = UrlFetchApp.fetch(url, options);
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`Gemini API Error (${MODEL_NAME}): ${response.getContentText()}`);
+  }
+  return JSON.parse(response.getContentText()).candidates[0].content.parts[0].text;
+}
+
+// === DIAGNOSTICS ===
+
+function testGeminiConnection() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const prompt = "Reply with exactly the word: 'Success'";
+    const response = callGemini(prompt);
+    ui.alert(`✅ API Connection Working! (${MODEL_NAME}) Response: ` + response);
+  } catch (e) {
+    ui.alert("❌ API FAILURE: " + e.toString());
+  }
+}
+
+function debugFirstRow() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const ui = SpreadsheetApp.getUi();
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  
+  let TITLE_IDX = headers.findIndex(h => h.match(/Title|Position/i));
+  let NAME_IDX = headers.findIndex(h => h.match(/Name/i));
+  
+  // Data sample
+  const data = sheet.getRange(2, 1, 1, sheet.getLastColumn()).getValues()[0];
+  
+  ui.alert(
+    `🧐 DEBUG COLUMNS:\n` +
+    `Found "Title" at Index: ${TITLE_IDX} (Value: "${data[TITLE_IDX] || 'EMPTY'}")\n` +
+    `Found "Name" at Index: ${NAME_IDX} (Value: "${data[NAME_IDX] || 'EMPTY'}")\n` +
+    `----------------\n` +
+    `If Index is -1, verify your header row (Row 1) has "Name" and "Title".`
+  );
+}
+

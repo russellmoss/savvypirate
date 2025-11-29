@@ -48,3 +48,6 @@ yarn-error.log*
 coverage/
 *.lcov
 .nyc_output/
+
+# Google Apps Script files with API keys - keep private
+google-apps-script/janitor-ai.gs
