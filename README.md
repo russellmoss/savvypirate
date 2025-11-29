@@ -534,13 +534,119 @@ After this step, your differential tab holds a **clean list of real advisors / R
 
 ---
 
-### AI Janitor Setup (Google Apps Script) ⚙️
+### Step 8: Enrich with BigQuery (CRM & Advisor Database) 💎
 
-If you want to use the exact same AI Janitor workflow, the full script is included in this repo at:
+After cleaning the differential list with the AI Janitor, you can enrich it with data from your advisor database and check if these prospects are already in your CRM. This is critical for:
 
-- `google-apps-script/janitor-ai.gs`
+1. **Getting CRD Numbers**: The CRD (Central Registration Depository) number is essential for accurate Clay enrichment later
+2. **Identifying Existing Pipeline**: See who's already a Lead or Opportunity in Salesforce
+3. **Understanding CRM History**: Check disposition, closed reasons, and last activity dates
+4. **AUM Intelligence**: Get advisor AUM data, growth rates, custodian info, and client breakdowns
 
-You copy‑paste this into a bound Apps Script project on your Google Sheet and add your own Gemini API key.
+#### 8.1: What the BigQuery Enrichment Does
+
+The **BigQuery Enrichment** feature (accessed via `🧹 Janitor AI → 💎 Run BigQuery Enrichment`) matches your cleaned differential list against:
+
+- **Advisor Discovery Database**: Three BigQuery tables containing advisor profiles with CRD numbers, AUM data, custodian information, and more
+- **Salesforce CRM**: Your Leads and Opportunities tables to identify existing pipeline contacts
+
+#### 8.2: Matching Logic
+
+The enricher uses a sophisticated multi-tier matching system:
+
+1. **LinkedIn URL Match** (Best): Matches by LinkedIn profile URL slug
+2. **Exact Name Match**: Matches by cleaned, normalized name
+3. **Token Match + Location**: Matches first/last name tokens AND location (city/state)
+4. **Token Match (No Location)**: Matches first/last name tokens only
+5. **Weak Fuzzy Match**: Fallback for partial matches
+
+When multiple matches exist, it prioritizes by:
+- Match quality (LinkedIn > Exact > Token+Location > Token > Fuzzy)
+- Total AUM (highest first)
+
+#### 8.3: Enrichment Data Added
+
+The enricher adds the following columns (starting at Column P):
+
+| Column | Description |
+|--------|-------------|
+| **Match Type** | How the match was made (LinkedIn, Exact, Token+Location, etc.) |
+| **CRM Type** | `Opportunity`, `Lead`, or `New Prospect` |
+| **CRM ID** | Salesforce ID (if found) |
+| **CRM Sentiment** | Disposition or Closed Lost Reason |
+| **Last Activity** | Date of last CRM activity |
+| **Salesforce Link** | Clickable link to the record |
+| **CRD Number** | ⭐ **Critical** - Used for Clay enrichment |
+| **Total AUM (M)** | Total assets under management in millions |
+| **Growth Rate (5yr)** | 5-year AUM growth rate |
+| **Growth Rate (1yr)** | 1-year AUM growth rate |
+| **Assets: HNW Individuals (M)** | High net worth individual assets |
+| **Assets: Individuals (M)** | Individual client assets |
+| **Assets: Retirement Plans (M)** | Retirement plan assets |
+| **% Clients: HNW** | Percentage of HNW clients |
+| **% Clients: Individuals** | Percentage of individual clients |
+| **% Clients: Retirement** | Percentage of retirement plan clients |
+| **Custodian: Schwab** | AUM with Schwab |
+| **Custodian: Pershing** | AUM with Pershing |
+| **Custodian: TD Ameritrade** | AUM with TD Ameritrade |
+| **Custodian: Fidelity** | AUM with Fidelity |
+| **# IA Reps** | Number of Investment Advisor representatives |
+| **LinkedIn URL (Found)** | LinkedIn URL from database |
+| **Brochure Keywords** | Keywords from advisor brochure |
+| **Custom Keywords** | Custom classification keywords |
+| **Registration Date** | CRD registration date |
+
+#### 8.4: How to Run BigQuery Enrichment
+
+1. **Make sure your differential tab is clean** (after running AI Janitor)
+2. **Navigate to the cleaned differential tab** (e.g., `new_connections_week_2`)
+3. **Click `🧹 Janitor AI` menu** in Google Sheets
+4. **Select `💎 Run BigQuery Enrichment`**
+5. The script will:
+   - Read all rows from the active tab
+   - Match against your BigQuery advisor database
+   - Check Salesforce CRM for existing Leads/Opportunities
+   - Add enrichment columns (starting at Column P)
+   - Auto-resize columns for readability
+
+#### 8.5: Understanding the Results
+
+- **Match Type**: Shows how confident the match is (LinkedIn match is most reliable)
+- **CRM Type = "New Prospect"**: Not in your CRM yet - these are fresh leads to pursue
+- **CRM Type = "Lead" or "Opportunity"**: Already in your pipeline - review sentiment and last activity to decide if you should re-engage
+- **CRD Number**: If populated, you can use this for more accurate Clay enrichment
+- **AUM Data**: Use this to prioritize high-value advisors
+
+#### 8.6: Using Enriched Data
+
+After enrichment, you can:
+
+1. **Filter by CRM Type**:
+   - Focus on "New Prospect" for fresh outreach
+   - Review "Lead" or "Opportunity" to see if re-engagement makes sense
+
+2. **Prioritize by AUM**:
+   - Sort by "Total AUM (M)" to target largest advisors first
+   - Use growth rates to identify expanding practices
+
+3. **Use CRD for Clay**:
+   - Export rows with CRD numbers
+   - Use CRD in Clay for more accurate firm/contact enrichment
+
+4. **Check CRM History**:
+   - Click Salesforce links to review full history
+   - Check "CRM Sentiment" to understand why they were closed/lost
+
+---
+
+### AI Janitor & Enricher Setup (Google Apps Script) ⚙️
+
+If you want to use the exact same AI Janitor and BigQuery Enrichment workflow, the full scripts are included in this repo:
+
+- `google-apps-script/janitor-ai.gs` - AI cleanup script
+- `google-apps-script/enricher.gs` - BigQuery enrichment script
+
+You copy‑paste both into a bound Apps Script project on your Google Sheet and configure your API keys.
 
 #### 7.3: Install the AI Janitor Script in Your Sheet
 
@@ -549,14 +655,18 @@ You copy‑paste this into a bound Apps Script project on your Google Sheet and 
 2. Click **`Extensions → Apps Script`**.
 3. In the Apps Script editor:
    - Delete any default `Code.gs` contents.
-   - Open `google-apps-script/janitor-ai.gs` in this repo.
-   - Copy all of its contents and paste into the editor.
-4. At the top of the script, find:
-   ```javascript
-   const GEMINI_API_KEY = 'INSERT_YOUR_KEY_HERE';
-   ```
-   - Replace `'INSERT_YOUR_KEY_HERE'` with your **own** Gemini API key from Google AI Studio.
-   - Keep this key **private**; do not commit it back into your repo.
+   - **Add Janitor AI Script**: Open `google-apps-script/janitor-ai.gs` in this repo, copy all contents, and paste into the editor.
+   - **Add Enricher Script**: Open `google-apps-script/enricher.gs` in this repo, copy all contents, and append to the same file (or create a new file `enricher.gs` in the project).
+4. **Configure API Keys**:
+   - In `janitor-ai.gs`, find and update:
+     ```javascript
+     const GEMINI_API_KEY = 'INSERT_YOUR_KEY_HERE';
+     ```
+     Replace with your Gemini API key from Google AI Studio.
+   - In `enricher.gs`, verify the BigQuery project ID matches your setup:
+     ```javascript
+     const BQ_PROJECT_ID = 'savvy-gtm-analytics';  // Update if different
+     ```
 5. Click **Save** in the Apps Script editor (or `Ctrl + S`).
 
 #### 7.4: Authorize and Test the AI Janitor
@@ -575,16 +685,17 @@ Once this is installed, you (or anyone else using the repo) can:
 - Run **`📅 Run on ALL Date Tabs`** to clean all weekly tabs.
 - Run **`📑 Clean Specific Tab...`** on a differential tab (e.g. `new_connections_week_2`).
 - Run **`▶️ Clean Selected Rows (Force)`** to manually clean a subset of rows.
+- Run **`💎 Run BigQuery Enrichment`** to enrich cleaned tabs with CRM and advisor database data.
 
-From there, you follow the same flow:
+From there, you follow the complete flow:
 
-- **Savvy Pirate** scrapes in greedy mode → **Compare Tabs** builds the differential → **AI Janitor** cleans → **Clay** enriches → **Salesforce & SGAs** execute.
+- **Savvy Pirate** scrapes in greedy mode → **Compare Tabs** builds the differential → **AI Janitor** cleans → **BigQuery Enrichment** adds CRM/AUM data → **Clay** enriches (using CRD numbers) → **Salesforce & SGAs** execute.
 
 ---
 
-### Step 8: Enrich in Clay, Upload to Salesforce, and Allocate to SGAs
+### Step 9: Enrich in Clay, Upload to Salesforce, and Allocate to SGAs
 
-Once the AI Janitor has cleaned your differential list:
+Once the AI Janitor has cleaned your differential list and BigQuery Enrichment has added CRM/AUM data:
 
 1. **Export / connect the clean tab to Clay**
    - Use Clay to enrich each advisor with additional data (emails, firm, AUM signals, etc.).

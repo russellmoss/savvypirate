@@ -14,11 +14,12 @@
 5. [State Management](#state-management)
 6. [Message Passing](#message-passing)
 7. [API Integrations](#api-integrations)
-8. [Key Algorithms](#key-algorithms)
-9. [Error Handling](#error-handling)
-10. [Extension Lifecycle](#extension-lifecycle)
-11. [Development Patterns](#development-patterns)
-12. [Testing & Debugging](#testing--debugging)
+8. [Google Apps Scripts](#google-apps-scripts)
+9. [Key Algorithms](#key-algorithms)
+10. [Error Handling](#error-handling)
+11. [Extension Lifecycle](#extension-lifecycle)
+12. [Development Patterns](#development-patterns)
+13. [Testing & Debugging](#testing--debugging)
 
 ---
 
@@ -571,6 +572,29 @@ try {
 **Endpoint**: `https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent`
 
 **Purpose**: AI-powered filtering of non-financial advisor profiles
+
+### Google BigQuery API (Enricher)
+
+**Used in**: `google-apps-script/enricher.gs`
+
+**Purpose**: Enriches cleaned differential lists with advisor database and CRM data
+
+**Key Features**:
+- Matches profiles against BigQuery discovery tables (advisor database)
+- Checks Salesforce CRM (Leads and Opportunities)
+- Returns CRD numbers, AUM data, custodian info, CRM status, and more
+
+**Matching Algorithm**:
+1. LinkedIn URL match (highest priority)
+2. Exact name match
+3. Token match + location
+4. Token match (no location)
+5. Weak fuzzy match (fallback)
+
+**Data Sources**:
+- `savvy-gtm-analytics.LeadScoring.staging_discovery_t1/2/3` (advisor database)
+- `savvy-gtm-analytics.SavvyGTMData.Lead` (Salesforce Leads)
+- `savvy-gtm-analytics.SavvyGTMData.Opportunity` (Salesforce Opportunities)
 
 ---
 
