@@ -119,6 +119,455 @@
     }
 
     // ============================================================
+    // PHASE 8: SELECTOR RESILIENCE SYSTEM
+    // ============================================================
+
+    /**
+     * Selector configuration loaded from background
+     * Will be populated on initialization
+     */
+    let selectorConfig = null;
+    let selectorStats = {};
+
+    /**
+     * Initialize selector system
+     * Loads configuration from background script
+     */
+    async function initializeSelectors() {
+        try {
+            // Request selector config from background
+            const response = await sendMessageToBackground({
+                action: 'GET_SELECTOR_CONFIG'
+            });
+            
+            if (response && response.success) {
+                selectorConfig = response.config;
+                selectorStats = response.stats || {};
+                console.log('[SELECTOR] ✅ Selector system initialized', {
+                    version: response.version,
+                    keys: Object.keys(selectorConfig)
+                });
+                return true;
+            } else {
+                console.warn('[SELECTOR] ⚠️ Failed to load selector config, using defaults');
+                // Fallback to hardcoded defaults (backward compatibility)
+                return false;
+            }
+        } catch (error) {
+            console.error('[SELECTOR] ❌ Error initializing:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Helper: Send message to background script
+     */
+    function sendMessageToBackground(message) {
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage(message, (response) => {
+                if (chrome.runtime.lastError) {
+                    console.warn('[SELECTOR] Message error:', chrome.runtime.lastError.message);
+                    resolve(null);
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+    }
+
+    /**
+     * Generate page structure fingerprint (content script version)
+     * Simplified version for content script context
+     */
+    function generatePageFingerprint(doc = document) {
+        const fingerprint = {
+            url: doc.location.href.split('?')[0],
+            dataAttributes: [],
+            keyClasses: []
+        };
+        
+        try {
+            // Collect data attributes
+            const dataElements = doc.querySelectorAll('[data-view-name], [data-test-id]');
+            Array.from(dataElements).slice(0, 20).forEach(el => {
+                if (el.dataset.viewName) fingerprint.dataAttributes.push(el.dataset.viewName);
+                if (el.dataset.testId) fingerprint.dataAttributes.push(el.dataset.testId);
+            });
+            
+            // Collect key classes
+            const keyClassElements = doc.querySelectorAll('.reusable-search, .entity-result, .search-result');
+            Array.from(keyClassElements).slice(0, 20).forEach(el => {
+                Array.from(el.classList || []).forEach(cls => {
+                    if ((cls.includes('search') || cls.includes('result') || cls.includes('entity')) && 
+                        !fingerprint.keyClasses.includes(cls)) {
+                        fingerprint.keyClasses.push(cls);
+                    }
+                });
+            });
+            
+            // Simple hash from fingerprint data
+            const fingerprintString = JSON.stringify({
+                url: fingerprint.url,
+                attrs: fingerprint.dataAttributes.sort().slice(0, 10),
+                classes: fingerprint.keyClasses.sort().slice(0, 10)
+            });
+            
+            let hash = 0;
+            for (let i = 0; i < fingerprintString.length; i++) {
+                const char = fingerprintString.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash;
+            }
+            
+            return hash.toString(36) + fingerprintString.length.toString(36);
+        } catch (error) {
+            console.warn('[SELECTOR] Error generating fingerprint:', error);
+            return 'error';
+        }
+    }
+
+    /**
+     * Query selector with fallback chain
+     * Tries each selector in order until one works
+     * 
+     * @param {Element} rootElement - Root element to search within (or document)
+     * @param {string} selectorKey - Key in selector config (e.g., 'profileCard', 'nameLink')
+     * @param {object} options - Additional options
+     * @returns {Element|null} - First matching element or null
+     */
+    function querySelectorWithFallbacks(rootElement, selectorKey, options = {}) {
+        // Fallback to hardcoded selectors if config not loaded
+        const selectors = selectorConfig?.[selectorKey] || getHardcodedFallback(selectorKey);
+        
+        if (!selectors || selectors.length === 0) {
+            console.error(`[SELECTOR] No selectors found for key: ${selectorKey}`);
+            return null;
+        }
+        
+        // Track attempts for statistics
+        const attempts = [];
+        
+        for (let i = 0; i < selectors.length; i++) {
+            const selector = selectors[i];
+            
+            try {
+                const result = rootElement.querySelector(selector);
+                
+                if (result) {
+                    // Success! Track it
+                    attempts.push({ selector, found: true, index: i });
+                    trackSelectorSuccess(selectorKey, selector);
+                    
+                    if (options.logSuccess !== false) {
+                        console.log(`[SELECTOR] ✅ Found "${selectorKey}" with selector #${i + 1}:`, selector);
+                    }
+                    
+                    return result;
+                } else {
+                    attempts.push({ selector, found: false, index: i });
+                }
+            } catch (error) {
+                attempts.push({ selector, found: false, index: i, error: error.message });
+                console.warn(`[SELECTOR] Selector error for "${selectorKey}":`, selector, error);
+            }
+        }
+        
+        // All selectors failed
+        logSelectorFailure(selectorKey, selectors, attempts, rootElement, options);
+        return null;
+    }
+
+    /**
+     * Query all elements matching selector with fallback chain
+     * Tries selectors in order, returns all matches from first working selector
+     * 
+     * @param {Element} rootElement - Root element to search within (or document)
+     * @param {string} selectorKey - Key in selector config
+     * @param {object} options - Additional options
+     * @returns {NodeList|Array} - All matching elements or empty array
+     */
+    function querySelectorAllWithFallbacks(rootElement, selectorKey, options = {}) {
+        const selectors = selectorConfig?.[selectorKey] || getHardcodedFallback(selectorKey);
+        
+        if (!selectors || selectors.length === 0) {
+            console.error(`[SELECTOR] No selectors found for key: ${selectorKey}`);
+            return [];
+        }
+        
+        for (let i = 0; i < selectors.length; i++) {
+            const selector = selectors[i];
+            
+            try {
+                const results = rootElement.querySelectorAll(selector);
+                
+                if (results && results.length > 0) {
+                    // Success! Track it
+                    trackSelectorSuccess(selectorKey, selector);
+                    
+                    if (options.logSuccess !== false) {
+                        console.log(`[SELECTOR] ✅ Found ${results.length} "${selectorKey}" with selector #${i + 1}:`, selector);
+                    }
+                    
+                    return results;
+                }
+            } catch (error) {
+                console.warn(`[SELECTOR] Selector error for "${selectorKey}":`, selector, error);
+            }
+        }
+        
+        // All selectors failed
+        logSelectorFailure(selectorKey, selectors, [], rootElement, options);
+        return [];
+    }
+
+    /**
+     * Hardcoded fallback selectors (backward compatibility)
+     * Used if selector config fails to load
+     */
+    function getHardcodedFallback(selectorKey) {
+        const fallbacks = {
+            profileCard: ['div[data-view-name="people-search-result"]'],
+            nameLink: ['a[data-view-name="search-result-lockup-title"]'],
+            title: ['p:nth-of-type(2)'],
+            location: ['p:nth-of-type(3)'],
+            connectionSource: ['a[data-view-name="search-result-social-proof-insight"]'],
+            nextButton: ['button[aria-label="Next"]'],
+            linkedInWarning: ['[data-test-id="security-challenge"]', '.challenge-dialog']
+        };
+        return fallbacks[selectorKey] || [];
+    }
+
+    /**
+     * Track selector success for statistics
+     * Sends message to background to update stats
+     * 
+     * @param {string} selectorKey - Key in config
+     * @param {string} selector - The selector string that worked
+     */
+    function trackSelectorSuccess(selectorKey, selector) {
+        // Fire and forget - don't block on this
+        sendMessageToBackground({
+            action: 'TRACK_SELECTOR_SUCCESS',
+            selectorKey,
+            selector
+        }).catch(() => {
+            // Ignore errors - stats tracking is non-critical
+        });
+    }
+
+    /**
+     * Track selector failure for statistics
+     * 
+     * @param {string} selectorKey - Key in config
+     * @param {string} selector - The selector string that failed
+     */
+    function trackSelectorFailure(selectorKey, selector) {
+        sendMessageToBackground({
+            action: 'TRACK_SELECTOR_FAILURE',
+            selectorKey,
+            selector
+        }).catch(() => {
+            // Ignore errors
+        });
+    }
+
+    /**
+     * Log comprehensive selector failure information
+     * Helps debug why selectors are failing
+     * 
+     * @param {string} selectorKey - Key that failed
+     * @param {Array<string>} selectors - All selectors attempted
+     * @param {Array} attempts - Details about each attempt
+     * @param {Element} rootElement - The root element searched
+     * @param {object} options - Additional context
+     */
+    function logSelectorFailure(selectorKey, selectors, attempts, rootElement, options = {}) {
+        // Track all failures
+        selectors.forEach(selector => {
+            trackSelectorFailure(selectorKey, selector);
+        });
+        
+        // PHASE 8 ENHANCEMENT: Generate page fingerprint
+        const fingerprint = generatePageFingerprint(document);
+        
+        // Capture diagnostic information
+        const diagnostics = {
+            selectorKey,
+            timestamp: new Date().toISOString(),
+            pageUrl: window.location.href,
+            selectorsAttempted: selectors,
+            attempts,
+            domSnapshot: captureRelevantDOM(rootElement),
+            options,
+            // Additional context
+            userAgent: navigator.userAgent,
+            pageTitle: document.title,
+            urlParams: new URLSearchParams(window.location.search).toString(),
+            visibleElements: {
+                totalDivs: document.querySelectorAll('div').length,
+                totalLinks: document.querySelectorAll('a').length,
+                profileLinks: document.querySelectorAll('a[href*="/in/"]').length
+            },
+            // Sample of what we CAN find (for debugging)
+            sampleSelectors: {
+                anyDataViewName: document.querySelectorAll('[data-view-name]').length,
+                anyReusableSearch: document.querySelectorAll('.reusable-search').length,
+                anyEntityResult: document.querySelectorAll('.entity-result').length
+            },
+            // PHASE 8 ENHANCEMENT: Page structure fingerprint
+            pageFingerprint: fingerprint
+        };
+        
+        // PHASE 8 ENHANCEMENT: Check if fingerprint changed (possible UI update)
+        sendMessageToBackground({
+            action: 'CHECK_PAGE_FINGERPRINT',
+            fingerprint,
+            pageUrl: window.location.href
+        }).catch(() => {});
+        
+        console.error(`[SELECTOR] ❌ All selectors failed for "${selectorKey}":`, diagnostics);
+        
+        // Send to background for storage/analysis
+        sendMessageToBackground({
+            action: 'LOG_SELECTOR_FAILURE',
+            diagnostics
+        }).catch(() => {
+            // Ignore errors
+        });
+    }
+
+    /**
+     * Capture relevant DOM snapshot for diagnostics
+     * Captures a safe snapshot without sensitive data
+     * 
+     * @param {Element} rootElement - Root element
+     * @returns {object} - DOM snapshot
+     */
+    function captureRelevantDOM(rootElement) {
+        try {
+            // Capture structure without sensitive content
+            const snapshot = {
+                rootTag: rootElement.tagName,
+                childCount: rootElement.children?.length || 0,
+                hasProfileCards: rootElement.querySelector('div[data-view-name]') !== null,
+                sampleStructure: []
+            };
+            
+            // Capture structure of first few children
+            const children = Array.from(rootElement.children || []).slice(0, 3);
+            children.forEach(child => {
+                snapshot.sampleStructure.push({
+                    tag: child.tagName,
+                    classes: Array.from(child.classList || []).slice(0, 5),
+                    dataAttributes: Object.keys(child.dataset || {}).slice(0, 3)
+                });
+            });
+            
+            return snapshot;
+        } catch (error) {
+            return { error: error.message };
+        }
+    }
+
+    /**
+     * Check for LinkedIn security warnings or checkpoints
+     * Returns true if a warning/checkpoint is detected
+     * 
+     * @returns {boolean} - True if warning detected
+     */
+    function checkLinkedInWarning() {
+        const selectors = selectorConfig?.linkedInWarning || getHardcodedFallback('linkedInWarning');
+        
+        for (const selector of selectors) {
+            try {
+                // Handle :contains() pseudo-selector (not supported in querySelector)
+                if (selector.includes(':contains(')) {
+                    const text = selector.match(/:contains\("([^"]+)"\)/)?.[1];
+                    if (text && document.body.innerText.toLowerCase().includes(text.toLowerCase())) {
+                        console.error('[SELECTOR] ⚠️ LINKEDIN WARNING DETECTED:', text);
+                        return true;
+                    }
+                    continue;
+                }
+                
+                const element = document.querySelector(selector);
+                if (element) {
+                    console.error('[SELECTOR] ⚠️ LINKEDIN WARNING DETECTED:', selector);
+                    return true;
+                }
+            } catch (error) {
+                // Ignore selector errors
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Validate all selectors on current page
+     * Tests each selector type and reports health
+     * 
+     * @returns {Promise<object>} - Validation results
+     */
+    async function validateAllSelectors() {
+        console.log('[SELECTOR] 🔍 Validating selectors on current page...');
+        
+        if (!selectorConfig) {
+            await initializeSelectors();
+        }
+        
+        const results = {};
+        const selectorKeys = Object.keys(selectorConfig || {});
+        
+        for (const key of selectorKeys) {
+            const selectors = selectorConfig[key];
+            const validation = {
+                key,
+                tested: selectors.length,
+                working: 0,
+                results: []
+            };
+            
+            for (const selector of selectors) {
+                try {
+                    const found = document.querySelector(selector);
+                    const count = document.querySelectorAll(selector).length;
+                    
+                    validation.results.push({
+                        selector,
+                        found: !!found,
+                        count,
+                        working: count > 0
+                    });
+                    
+                    if (count > 0) {
+                        validation.working++;
+                    }
+                } catch (error) {
+                    validation.results.push({
+                        selector,
+                        found: false,
+                        error: error.message
+                    });
+                }
+            }
+            
+            results[key] = validation;
+        }
+        
+        // Send results to background for storage
+        sendMessageToBackground({
+            action: 'SELECTOR_VALIDATION_RESULTS',
+            results,
+            pageUrl: window.location.href,
+            timestamp: new Date().toISOString()
+        });
+        
+        console.log('[SELECTOR] ✅ Validation complete:', results);
+        return results;
+    }
+
+    // ============================================================
     // UI MODULE: Stop Button
     // ============================================================
     function createStopButton() {
@@ -190,7 +639,17 @@
     // PARSER MODULE: Extract Profile Data
     // ============================================================
     function getConnectionSource() {
-        const filters = document.querySelectorAll('div[data-view-name="search-filter-top-bar-select"] label');
+        // Use fallback selector for filter bar
+        const filterBar = querySelectorWithFallbacks(document, 'filterBar', {
+            context: 'getConnectionSource',
+            logSuccess: false
+        });
+        
+        if (!filterBar) {
+            return "";
+        }
+        
+        const filters = filterBar.querySelectorAll('label');
         const ignoreList = ["People", "Connections", "Locations", "Current companies", "All filters", "Reset", "1st", "2nd", "3rd+"];
         
         for (const filter of filters) {
@@ -199,19 +658,51 @@
                 return cleanName(text);
             }
         }
+        
         return "";
     }
 
     function scrapeCurrentPage(defaultSource) {
         const rows = [];
-        const cards = document.querySelectorAll('div[data-view-name="people-search-result"]');
+        
+        // Use fallback selector system
+        const cards = querySelectorAllWithFallbacks(document, 'profileCard', {
+            context: 'scrapeCurrentPage'
+        });
+        
+        if (cards.length === 0) {
+            console.warn('[CS] No profile cards found with any selector');
+            return rows;
+        }
+        
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
+        // PHASE 8 ENHANCEMENT: Check for LinkedIn warnings before scraping
+        if (checkLinkedInWarning()) {
+            console.error('[CS] ⚠️ LinkedIn security checkpoint detected - pausing scrape');
+            
+            // Notify background and user
+            sendMessageToBackground({
+                action: 'LINKEDIN_WARNING_DETECTED',
+                pageUrl: window.location.href,
+                timestamp: new Date().toISOString()
+            });
+            
+            // Stop scraping
+            throw new Error('LinkedIn security checkpoint detected. Please complete the verification and try again.');
+        }
+        
         cards.forEach((card) => {
             try {
-                // Name & URL
-                const nameAnchor = card.querySelector('a[data-view-name="search-result-lockup-title"]');
-                if (!nameAnchor) return;
+                // Use fallback selectors for each field
+                const nameAnchor = querySelectorWithFallbacks(card, 'nameLink', {
+                    context: 'scrapeCurrentPage.nameLink'
+                });
+                
+                if (!nameAnchor) {
+                    console.warn('[CS] Name link not found in card');
+                    return;
+                }
 
                 const fullName = nameAnchor.innerText.trim();
                 let url = nameAnchor.href || "";
@@ -220,13 +711,20 @@
                 // Parse name and extract accreditations
                 const { cleanName, accreditations } = parseNameWithAccreditations(fullName);
 
-                // Title & Location from <p> tags
-                const pTags = card.querySelectorAll('p');
-                const title = pTags.length >= 2 ? pTags[1].innerText.trim() : "";
-                const location = pTags.length >= 3 ? pTags[2].innerText.trim() : "";
+                // Title and location with fallbacks
+                const titleElement = querySelectorWithFallbacks(card, 'title', {
+                    context: 'scrapeCurrentPage.title',
+                    logSuccess: false // Reduce noise
+                });
+                const title = titleElement ? titleElement.innerText.trim() : "";
 
-                // Connection source: Always use the provided source from input sheet
-                // (No longer trying to extract from page or inline sources)
+                const locationElement = querySelectorWithFallbacks(card, 'location', {
+                    context: 'scrapeCurrentPage.location',
+                    logSuccess: false
+                });
+                const location = locationElement ? locationElement.innerText.trim() : "";
+
+                // Connection source comes from input sheet (passed via message.sourceName)
                 const connectionSource = defaultSource || "N/A";
 
                 if (cleanName && url) {
@@ -344,7 +842,19 @@
     }
     
     function clickNextButton() {
-        // Strategy 1: Find Next button with data-testid (most reliable)
+        // PHASE 8: Try fallback selectors first
+        const nextButton = querySelectorWithFallbacks(document, 'nextButton', {
+            context: 'clickNextButton',
+            logSuccess: false
+        });
+        
+        if (nextButton && !nextButton.disabled) {
+            console.log('[CS] Found Next button via fallback selector');
+            nextButton.click();
+            return true;
+        }
+        
+        // Fallback: Try data-testid (legacy strategy)
         const nextBtn = document.querySelector('button[data-testid="pagination-controls-next-button-visible"]');
         if (nextBtn && nextBtn.offsetParent !== null) {
             console.log('[CS] Found Next via data-testid');
@@ -352,32 +862,17 @@
             return true;
         }
         
-        // Strategy 2: Find visible "Next" text
+        // Fallback: Try text-based search (manual strategy)
         const allElements = Array.from(document.querySelectorAll('span, button, a'));
         const nextEl = allElements.find(el => 
             el.innerText && 
             el.innerText.trim() === "Next" && 
             el.offsetParent !== null
         );
+        
         if (nextEl) {
-            console.log('[CS] Found Next via text');
+            console.log('[CS] Found Next via text search');
             nextEl.click();
-            return true;
-        }
-
-        // Strategy 3: Aria label
-        const ariaBtn = document.querySelector('button[aria-label="Next"]');
-        if (ariaBtn && !ariaBtn.disabled) {
-            console.log('[CS] Found Next via aria-label');
-            ariaBtn.click();
-            return true;
-        }
-
-        // Strategy 4: Pagination class
-        const paginationBtn = document.querySelector('.artdeco-pagination__button--next:not([disabled])');
-        if (paginationBtn) {
-            console.log('[CS] Found Next via class');
-            paginationBtn.click();
             return true;
         }
 
@@ -419,6 +914,31 @@
         // Main loop
         while (!stopRequested && pageCount < CONFIG.MAX_PAGES) {
             pageCount++;
+            
+            // PHASE 8 ENHANCEMENT: Periodic selector health check (every 10 pages)
+            if (pageCount % 10 === 0 && pageCount > 0) {
+                try {
+                    const results = await validateAllSelectors();
+                    
+                    // Check if we're getting fewer results than expected
+                    const profileCards = querySelectorAllWithFallbacks(document, 'profileCard', {
+                        logSuccess: false
+                    });
+                    
+                    if (profileCards.length === 0) {
+                        console.warn(`[SELECTOR] ⚠️ No profile cards found on page ${pageCount} - possible selector issue`);
+                    }
+                    
+                    // Log selector performance
+                    console.log(`[SELECTOR] Health check on page ${pageCount}:`, {
+                        cardsFound: profileCards.length,
+                        selectorsValidated: Object.keys(results).length
+                    });
+                } catch (error) {
+                    // Don't interrupt scraping for health check errors
+                    console.warn('[SELECTOR] Health check error:', error);
+                }
+            }
             
             // Update pagination state for progress estimation
             const paginationState = detectPaginationState();
@@ -546,6 +1066,15 @@
                 sendResponse({ status: 'alive' });
                 break;
 
+            case 'VALIDATE_SELECTORS': {
+                validateAllSelectors().then(results => {
+                    sendResponse({ success: true, results });
+                }).catch(error => {
+                    sendResponse({ success: false, error: error.message });
+                });
+                return true; // Keep channel open for async
+            }
+
             default:
                 sendResponse({ error: 'Unknown action' });
         }
@@ -557,5 +1086,48 @@
     // INITIALIZATION
     // ============================================================
     console.log('[CS] ✅ Savvy Pirate content script loaded');
+
+    // PHASE 8: Initialize selector system
+    initializeSelectors().then(initialized => {
+        if (initialized) {
+            console.log('[SELECTOR] Selector resilience system active');
+        } else {
+            console.warn('[SELECTOR] Using fallback selectors');
+        }
+    });
+
+    // PHASE 8: Auto-validate selectors on LinkedIn pages
+    if (window.location.href.includes('linkedin.com')) {
+        // Wait a bit for page to fully load
+        setTimeout(async () => {
+            if (window.location.href.includes('/search/results/people')) {
+                console.log('[SELECTOR] Auto-validating selectors on search page...');
+                
+                try {
+                    const results = await validateAllSelectors();
+                    
+                    // Check for critical failures
+                    const criticalFailures = Object.keys(results).filter(key => {
+                        return results[key].working === 0;
+                    });
+                    
+                    if (criticalFailures.length > 0) {
+                        console.error('[SELECTOR] ⚠️ CRITICAL: Selectors failing:', criticalFailures);
+                        
+                        // Notify user (non-intrusive)
+                        chrome.runtime.sendMessage({
+                            action: 'SELECTOR_CRITICAL_FAILURE',
+                            failures: criticalFailures,
+                            pageUrl: window.location.href
+                        }).catch(() => {});
+                    } else {
+                        console.log('[SELECTOR] ✅ All selectors validated successfully');
+                    }
+                } catch (error) {
+                    console.warn('[SELECTOR] Auto-validation error:', error);
+                }
+            }
+        }, 2000); // Wait 2 seconds for page to load
+    }
 
 })();

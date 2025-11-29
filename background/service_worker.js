@@ -11,6 +11,18 @@ import {
     retryFailedItems,
     updateQueueTabName
 } from './sync_queue.js';
+// PHASE 8: Selector Configuration
+import {
+    loadSelectorConfig,
+    saveSelectorConfig,
+    resetSelectorConfig,
+    loadSelectorStats,
+    saveSelectorStats,
+    updateSelectorStat,
+    autoLearnSelectorOrder,
+    DEFAULT_SELECTORS,
+    SELECTOR_VERSION
+} from './selector_config.js';
 
 // --- STATE ---
 let currentOutputSheetId = null;
@@ -1351,6 +1363,404 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     break;
                 }
                 
+                // ============================================================
+                // PHASE 8: SELECTOR RESILIENCE MANAGEMENT
+                // ============================================================
+                
+                case 'GET_SELECTOR_CONFIG': {
+                    try {
+                        const config = await loadSelectorConfig();
+                        const stats = await loadSelectorStats();
+                        response = {
+                            success: true,
+                            config: config.selectors,
+                            version: config.version,
+                            stats: stats
+                        };
+                    } catch (error) {
+                        console.error('[SW] Error loading selector config:', error);
+                        response = {
+                            success: false,
+                            error: error.message,
+                            config: DEFAULT_SELECTORS,
+                            version: SELECTOR_VERSION,
+                            stats: {}
+                        };
+                    }
+                    break;
+                }
+
+                case 'UPDATE_SELECTOR_CONFIG': {
+                    try {
+                        const { selectors } = message;
+                        
+                        // Validate structure
+                        if (!selectors || typeof selectors !== 'object') {
+                            response = { success: false, error: 'Invalid selector configuration' };
+                            break;
+                        }
+                        
+                        await saveSelectorConfig(selectors);
+                        console.log('[SW] ✅ Selector config updated');
+                        
+                        response = { success: true };
+                    } catch (error) {
+                        console.error('[SW] Error updating selector config:', error);
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+
+                case 'RESET_SELECTOR_CONFIG': {
+                    try {
+                        await resetSelectorConfig();
+                        console.log('[SW] ✅ Selector config reset to defaults');
+                        
+                        response = { success: true };
+                    } catch (error) {
+                        console.error('[SW] Error resetting selector config:', error);
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+
+                case 'TRACK_SELECTOR_SUCCESS': {
+                    try {
+                        const { selectorKey, selector } = message;
+                        await updateSelectorStat(selectorKey, selector, true);
+                        
+                        // Fire and forget - don't block response
+                        response = { success: true };
+                    } catch (error) {
+                        // Don't fail the request if stats tracking fails
+                        response = { success: true };
+                    }
+                    break;
+                }
+
+                case 'TRACK_SELECTOR_FAILURE': {
+                    try {
+                        const { selectorKey, selector } = message;
+                        await updateSelectorStat(selectorKey, selector, false);
+                        
+                        response = { success: true };
+                    } catch (error) {
+                        response = { success: true };
+                    }
+                    break;
+                }
+
+                case 'LOG_SELECTOR_FAILURE': {
+                    try {
+                        const { diagnostics } = message;
+                        
+                        // Store failure diagnostics (keep last 10)
+                        const failures = await getFromStorage(['selectorFailures']);
+                        const failureList = failures.selectorFailures || [];
+                        
+                        failureList.push({
+                            ...diagnostics,
+                            id: Date.now() + '-' + Math.random().toString(36).substr(2, 9)
+                        });
+                        
+                        // Keep only last 10 failures
+                        if (failureList.length > 10) {
+                            failureList.shift();
+                        }
+                        
+                        await saveToStorage({ selectorFailures: failureList });
+                        
+                        console.warn('[SW] Selector failure logged:', diagnostics.selectorKey);
+                        
+                        response = { success: true };
+                    } catch (error) {
+                        console.error('[SW] Error logging selector failure:', error);
+                        response = { success: true };
+                    }
+                    break;
+                }
+
+                case 'SELECTOR_VALIDATION_RESULTS': {
+                    try {
+                        const { results, pageUrl, timestamp } = message;
+                        
+                        // Store validation results
+                        await saveToStorage({
+                            lastSelectorValidation: {
+                                results,
+                                pageUrl,
+                                timestamp
+                            }
+                        });
+                        
+                        // Check for critical issues (no selectors working)
+                        const criticalIssues = Object.keys(results).filter(key => {
+                            return results[key].working === 0;
+                        });
+                        
+                        if (criticalIssues.length > 0) {
+                            console.error('[SW] ⚠️ CRITICAL: Selectors failing:', criticalIssues);
+                            
+                            // PHASE 8 ENHANCEMENT: Trigger auto-learning when critical issues detected
+                            try {
+                                const config = await loadSelectorConfig();
+                                const reorderedConfig = await autoLearnSelectorOrder(config.selectors);
+                                const orderChanged = JSON.stringify(reorderedConfig) !== JSON.stringify(config.selectors);
+                                
+                                if (orderChanged) {
+                                    await saveSelectorConfig(reorderedConfig);
+                                    console.log('[SW] ✅ Auto-learned selector order after critical failure');
+                                }
+                            } catch (e) {
+                                // Auto-learning failed, but don't fail the validation
+                                console.warn('[SW] Auto-learning error:', e);
+                            }
+                        }
+                        
+                        response = { success: true, criticalIssues };
+                    } catch (error) {
+                        console.error('[SW] Error storing validation results:', error);
+                        response = { success: true };
+                    }
+                    break;
+                }
+
+                case 'GET_SELECTOR_HEALTH': {
+                    try {
+                        const config = await loadSelectorConfig();
+                        const stats = await loadSelectorStats();
+                        const failures = await getFromStorage(['selectorFailures']);
+                        const validation = await getFromStorage(['lastSelectorValidation']);
+                        
+                        // Calculate health summary
+                        const health = {
+                            version: config.version,
+                            configLoaded: !!config.selectors,
+                            totalSelectorKeys: Object.keys(config.selectors).length,
+                            statsAvailable: Object.keys(stats).length,
+                            recentFailures: (failures.selectorFailures || []).length,
+                            lastValidation: validation.lastSelectorValidation?.timestamp || null,
+                            criticalIssues: []
+                        };
+                        
+                        // Identify selectors with low success rates
+                        Object.keys(stats).forEach(statKey => {
+                            const stat = stats[statKey];
+                            if (stat.attempts >= 10 && stat.successRate < 0.5) {
+                                health.criticalIssues.push({
+                                    selector: statKey,
+                                    successRate: stat.successRate,
+                                    attempts: stat.attempts
+                                });
+                            }
+                        });
+                        
+                        response = {
+                            success: true,
+                            health
+                        };
+                    } catch (error) {
+                        console.error('[SW] Error getting selector health:', error);
+                        response = {
+                            success: false,
+                            error: error.message
+                        };
+                    }
+                    break;
+                }
+
+                case 'RESET_SELECTOR_STATS': {
+                    try {
+                        await saveSelectorStats({});
+                        console.log('[SW] ✅ Selector stats reset');
+                        
+                        response = { success: true };
+                    } catch (error) {
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+
+                case 'LINKEDIN_WARNING_DETECTED': {
+                    try {
+                        const { pageUrl, timestamp } = message;
+                        
+                        // Store warning detection
+                        const warnings = await getFromStorage(['linkedInWarnings']);
+                        const warningList = warnings.linkedInWarnings || [];
+                        
+                        warningList.push({
+                            pageUrl,
+                            timestamp: timestamp || new Date().toISOString(),
+                            id: Date.now() + '-' + Math.random().toString(36).substr(2, 9)
+                        });
+                        
+                        // Keep only last 5 warnings
+                        if (warningList.length > 5) {
+                            warningList.shift();
+                        }
+                        
+                        await saveToStorage({ linkedInWarnings: warningList });
+                        
+                        // Trigger notification to all popup instances
+                        chrome.runtime.sendMessage({
+                            action: 'SHOW_WARNING_NOTIFICATION',
+                            message: 'LinkedIn security checkpoint detected. Please complete verification before continuing.',
+                            type: 'linkedin_warning'
+                        }).catch(() => {}); // Ignore if no popup open
+                        
+                        console.error('[SW] 🚨 LinkedIn warning detected:', pageUrl);
+                        
+                        response = { success: true };
+                    } catch (error) {
+                        console.error('[SW] Error handling LinkedIn warning:', error);
+                        response = { success: true };
+                    }
+                    break;
+                }
+
+                case 'AUTO_LEARN_SELECTORS': {
+                    try {
+                        const config = await loadSelectorConfig();
+                        const stats = await loadSelectorStats();
+                        
+                        // Only auto-learn if we have enough data
+                        const hasEnoughData = Object.keys(stats).some(statKey => {
+                            const stat = stats[statKey];
+                            return stat.attempts >= 10;
+                        });
+                        
+                        if (!hasEnoughData) {
+                            response = { success: true, learned: false, reason: 'Insufficient data' };
+                            break;
+                        }
+                        
+                        // Reorder selectors based on performance
+                        const reorderedConfig = await autoLearnSelectorOrder(config.selectors);
+                        
+                        // Only save if order changed
+                        const orderChanged = JSON.stringify(reorderedConfig) !== JSON.stringify(config.selectors);
+                        
+                        if (orderChanged) {
+                            await saveSelectorConfig(reorderedConfig);
+                            console.log('[SW] ✅ Selector order auto-learned and updated');
+                            response = { success: true, learned: true, updated: true };
+                        } else {
+                            response = { success: true, learned: true, updated: false, reason: 'Order already optimal' };
+                        }
+                    } catch (error) {
+                        console.error('[SW] Error auto-learning selectors:', error);
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+
+                case 'CHECK_PAGE_FINGERPRINT': {
+                    try {
+                        const { fingerprint, pageUrl } = message;
+                        
+                        // Get last known fingerprint for this URL
+                        const fingerprints = await getFromStorage(['pageFingerprints']);
+                        const fingerprintMap = fingerprints.pageFingerprints || {};
+                        
+                        const urlBase = pageUrl.split('?')[0]; // URL without params
+                        const lastFingerprint = fingerprintMap[urlBase];
+                        
+                        if (lastFingerprint && lastFingerprint.fingerprint !== fingerprint) {
+                            // Fingerprint changed - possible UI update
+                            console.warn('[SW] ⚠️ Page structure changed - LinkedIn may have updated UI:', urlBase);
+                            
+                            // Store change detection
+                            const changes = await getFromStorage(['pageStructureChanges']);
+                            const changeList = changes.pageStructureChanges || [];
+                            
+                            changeList.push({
+                                url: urlBase,
+                                oldFingerprint: lastFingerprint.fingerprint,
+                                newFingerprint: fingerprint,
+                                timestamp: new Date().toISOString(),
+                                lastSeen: lastFingerprint.timestamp
+                            });
+                            
+                            // Keep only last 10 changes
+                            if (changeList.length > 10) {
+                                changeList.shift();
+                            }
+                            
+                            await saveToStorage({ pageStructureChanges: changeList });
+                            
+                            response = {
+                                success: true,
+                                changed: true,
+                                message: 'Page structure changed - LinkedIn UI may have been updated'
+                            };
+                        } else {
+                            // Update fingerprint
+                            fingerprintMap[urlBase] = {
+                                fingerprint,
+                                timestamp: new Date().toISOString()
+                            };
+                            await saveToStorage({ pageFingerprints: fingerprintMap });
+                            
+                            response = { success: true, changed: false };
+                        }
+                    } catch (error) {
+                        console.error('[SW] Error checking fingerprint:', error);
+                        response = { success: false, error: error.message };
+                    }
+                    break;
+                }
+
+                case 'SELECTOR_CRITICAL_FAILURE': {
+                    try {
+                        const { failures, pageUrl } = message;
+                        
+                        // Store critical failure
+                        await saveToStorage({
+                            lastCriticalSelectorFailure: {
+                                failures,
+                                pageUrl,
+                                timestamp: new Date().toISOString()
+                            }
+                        });
+                        
+                        console.error('[SW] 🚨 CRITICAL: Selector failures detected:', failures);
+                        
+                        // PHASE 8 ENHANCEMENT: Send visible notification to popup
+                        chrome.runtime.sendMessage({
+                            action: 'SHOW_CRITICAL_FAILURE_NOTIFICATION',
+                            failures,
+                            pageUrl,
+                            message: `Critical selector failures detected: ${failures.join(', ')}. Scraping may fail.`
+                        }).catch(() => {}); // Ignore if no popup open
+                        
+                        // PHASE 8 ENHANCEMENT: Optional webhook notification (if configured)
+                        const webhookConfig = await getFromStorage(['webhookUrl']);
+                        if (webhookConfig.webhookUrl) {
+                            try {
+                                fetch(webhookConfig.webhookUrl, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        type: 'selector_critical_failure',
+                                        failures,
+                                        pageUrl,
+                                        timestamp: new Date().toISOString()
+                                    })
+                                }).catch(() => {}); // Fire and forget
+                            } catch (e) {
+                                // Ignore webhook errors
+                            }
+                        }
+                        
+                        response = { success: true };
+                    } catch (error) {
+                        console.error('[SW] Error handling critical failure:', error);
+                        response = { success: true };
+                    }
+                    break;
+                }
+
                 default:
                     response = { success: false, error: `Unknown action: ${action}` };
             }
@@ -1408,6 +1818,31 @@ chrome.runtime.onInstalled.addListener(() => {
         }
         
         startQueueProcessor(); // Ensure queue processor runs
+        
+        // PHASE 8: Selector system health check
+        try {
+            const config = await loadSelectorConfig();
+            console.log(`[SW] Selector system v${config.version} loaded`);
+            
+            // Check for recent failures
+            const failures = await getFromStorage(['selectorFailures']);
+            const failureList = failures.selectorFailures || [];
+            
+            if (failureList.length > 0) {
+                const recentFailures = failureList.filter(f => {
+                    const failTime = new Date(f.timestamp);
+                    const hoursAgo = (Date.now() - failTime.getTime()) / (1000 * 60 * 60);
+                    return hoursAgo < 24; // Last 24 hours
+                });
+                
+                if (recentFailures.length > 0) {
+                    console.warn(`[SW] ⚠️ ${recentFailures.length} selector failures in last 24 hours`);
+                }
+            }
+        } catch (selectorError) {
+            console.warn('[SW] Selector system health check failed:', selectorError);
+        }
+        
         console.log('[SW] Service worker initialized');
     } catch (error) {
         console.error('[SW] Init error:', error);

@@ -8,6 +8,15 @@
 </head>
 <body>
     <div class="container">
+        <!-- Notification Banner (NEW - Phase 8 Enhancement) -->
+        <div class="notification-banner" id="notificationBanner" style="display: none;">
+            <div class="notification-content">
+                <span class="notification-icon" id="notificationIcon">⚠️</span>
+                <span class="notification-message" id="notificationMessage"></span>
+                <button class="notification-close" id="notificationClose">×</button>
+            </div>
+        </div>
+
         <!-- Header -->
         <header class="header">
             <h1><img src="../icons/icon16.png" alt="Skull" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 4px;"> Savvy Pirate</h1>
@@ -315,6 +324,50 @@
                 <button id="retryFailedBtn" class="btn btn-small btn-warning">🔄 Retry</button>
                 <button id="downloadFailedBtn" class="btn btn-small btn-secondary">📥 Export CSV</button>
             </div>
+        </section>
+
+        <!-- Selector Health Section (NEW - Phase 8) -->
+        <section class="section selector-health-section" id="selectorHealthSection">
+            <h2>🔍 Selector Health</h2>
+            
+            <div class="selector-health-status" id="selectorHealthStatus">
+                <div class="health-indicator" id="healthIndicator">
+                    <span class="health-dot"></span>
+                    <span class="health-text" id="healthText">Checking...</span>
+                </div>
+                <button id="testSelectorsBtn" class="btn btn-small btn-secondary">
+                    🧪 Test Selectors
+                </button>
+            </div>
+            
+            <div class="selector-health-details" id="selectorHealthDetails" style="display: none;">
+                <div class="health-summary" id="healthSummary">
+                    <p class="health-summary-text">Loading health data...</p>
+                </div>
+                
+                <details class="health-details-collapsible">
+                    <summary>View Details</summary>
+                    <div class="health-details-content" id="healthDetailsContent">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </details>
+            </div>
+            
+            <details class="advanced-selector-controls" style="margin-top: 10px;">
+                <summary style="font-size: 11px; color: #888; cursor: pointer;">Advanced: Update Selectors</summary>
+                <div class="advanced-controls-content" style="margin-top: 8px; padding: 8px; background: #1a1a1a; border-radius: 4px;">
+                    <p style="font-size: 11px; color: #888; margin-bottom: 8px;">
+                        Update selectors manually (JSON format). Use with caution.
+                    </p>
+                    <textarea id="selectorConfigTextarea" 
+                              placeholder='{"profileCard": ["selector1", "selector2"], ...}'
+                              style="width: 100%; min-height: 100px; font-family: monospace; font-size: 11px; padding: 6px; background: #2a2a2a; color: #f0f0f0; border: 1px solid #555; border-radius: 4px; resize: vertical;"></textarea>
+                    <div style="display: flex; gap: 6px; margin-top: 8px;">
+                        <button id="updateSelectorsBtn" class="btn btn-small btn-warning">Update</button>
+                        <button id="resetSelectorsBtn" class="btn btn-small btn-secondary">Reset to Defaults</button>
+                    </div>
+                </div>
+            </details>
         </section>
 
         <!-- Actions -->

@@ -99,6 +99,24 @@ const elements = {
     clearMappingBtn: document.getElementById('clearMappingBtn'),
     autoMapBtn: document.getElementById('autoMapBtn'),
     
+    // Phase 8: Selector Health
+    selectorHealthSection: document.getElementById('selectorHealthSection'),
+    healthIndicator: document.getElementById('healthIndicator'),
+    healthDot: document.querySelector('.health-dot'),
+    healthText: document.getElementById('healthText'),
+    testSelectorsBtn: document.getElementById('testSelectorsBtn'),
+    selectorHealthDetails: document.getElementById('selectorHealthDetails'),
+    healthSummary: document.getElementById('healthSummary'),
+    healthDetailsContent: document.getElementById('healthDetailsContent'),
+    selectorConfigTextarea: document.getElementById('selectorConfigTextarea'),
+    updateSelectorsBtn: document.getElementById('updateSelectorsBtn'),
+    resetSelectorsBtn: document.getElementById('resetSelectorsBtn'),
+    // Phase 8 Enhancement: Notifications
+    notificationBanner: document.getElementById('notificationBanner'),
+    notificationIcon: document.getElementById('notificationIcon'),
+    notificationMessage: document.getElementById('notificationMessage'),
+    notificationClose: document.getElementById('notificationClose'),
+    
     // --- Phase 8: Auto-Run ---
     autoRunSection: document.getElementById('autoRunSection'),
     selectionSummary: document.getElementById('selectionSummary'),
@@ -147,6 +165,9 @@ let state = {
     // Phase 7: Compare Tabs
     compareTabs: [],
     isComparing: false,
+    
+    // Phase 8: Selector Health
+    selectorHealth: null,
     
     // PHASE 8: Auto-Run Batch Queue
     sourceMapping: {},            // Source name → Workbook ID
@@ -2788,6 +2809,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         updateAutoRunProgressFromServiceWorker(message.progress, message.isRunning);
                     }
                     break;
+                
+                // PHASE 8 ENHANCEMENT: Handle notifications
+                case 'SHOW_CRITICAL_FAILURE_NOTIFICATION':
+                    showNotification(message.message || 'Critical selector failures detected', 'error');
+                    break;
+                
+                case 'SHOW_WARNING_NOTIFICATION':
+                    showNotification(
+                        message.message || 'LinkedIn security checkpoint detected',
+                        message.type || 'linkedin_warning'
+                    );
+                    break;
+                    
+                case 'SELECTOR_VALIDATION_COMPLETE':
+                    if (message.results) {
+                        showSelectorTestResults(message.results);
+                    }
+                    checkSelectorHealth(); // Refresh health display
+                    break;
             }
         } catch (error) {
             console.error('[POPUP] Message handler error:', error);
@@ -2797,6 +2837,303 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ received: true });
     return true;
 });
+
+// ============================================================
+// PHASE 8: SELECTOR HEALTH FUNCTIONS
+// ============================================================
+
+/**
+ * Check selector health and update UI
+ */
+async function checkSelectorHealth() {
+    try {
+        const response = await sendMessage('GET_SELECTOR_HEALTH');
+        
+        if (response && response.success) {
+            state.selectorHealth = response.health;
+            updateSelectorHealthUI(response.health);
+        } else {
+            updateSelectorHealthUI(null, 'Error checking health');
+        }
+    } catch (error) {
+        console.error('[POPUP] Error checking selector health:', error);
+        updateSelectorHealthUI(null, 'Error checking health');
+    }
+}
+
+/**
+ * Update selector health UI based on health data
+ */
+function updateSelectorHealthUI(health, errorMessage = null) {
+    const dot = elements.healthDot;
+    const text = elements.healthText;
+    
+    if (errorMessage || !health) {
+        if (dot) dot.className = 'health-dot';
+        if (text) text.textContent = errorMessage || 'Unknown';
+        return;
+    }
+    
+    // Determine health status
+    const hasCriticalIssues = health.criticalIssues.length > 0;
+    const hasRecentFailures = health.recentFailures > 0;
+    
+    if (dot) {
+        if (hasCriticalIssues) {
+            dot.className = 'health-dot critical';
+        } else if (hasRecentFailures) {
+            dot.className = 'health-dot warning';
+        } else {
+            dot.className = 'health-dot healthy';
+        }
+    }
+    
+    if (text) {
+        if (hasCriticalIssues) {
+            text.textContent = `Critical: ${health.criticalIssues.length} issues`;
+        } else if (hasRecentFailures) {
+            text.textContent = `Warning: ${health.recentFailures} recent failures`;
+        } else {
+            text.textContent = 'Healthy';
+        }
+    }
+    
+    // Update summary
+    if (elements.healthSummary) {
+        const summaryHTML = `
+            <p class="health-summary-text">
+                Version: ${health.version} | 
+                Selectors: ${health.totalSelectorKeys} | 
+                Stats: ${health.statsAvailable} tracked
+                ${hasRecentFailures ? ` | Failures: ${health.recentFailures}` : ''}
+            </p>
+        `;
+        elements.healthSummary.innerHTML = summaryHTML;
+    }
+    
+    // Show details if there are issues
+    if (hasCriticalIssues || hasRecentFailures) {
+        if (elements.selectorHealthDetails) {
+            elements.selectorHealthDetails.style.display = 'block';
+        }
+        updateHealthDetails(health);
+    }
+}
+
+/**
+ * Update detailed health information
+ */
+function updateHealthDetails(health) {
+    if (!elements.healthDetailsContent) return;
+    
+    let detailsHTML = '<div style="line-height: 1.6;">';
+    
+    if (health.criticalIssues.length > 0) {
+        detailsHTML += '<div style="color: #dc3545; margin-bottom: 8px;"><strong>Critical Issues:</strong></div>';
+        health.criticalIssues.forEach(issue => {
+            detailsHTML += `<div style="margin-left: 12px; margin-bottom: 4px;">
+                ${issue.selector}: ${(issue.successRate * 100).toFixed(1)}% success 
+                (${issue.attempts} attempts)
+            </div>`;
+        });
+    }
+    
+    if (health.lastValidation) {
+        detailsHTML += `<div style="margin-top: 8px; color: #888; font-size: 10px;">
+            Last validation: ${new Date(health.lastValidation).toLocaleString()}
+        </div>`;
+    }
+    
+    detailsHTML += '</div>';
+    elements.healthDetailsContent.innerHTML = detailsHTML;
+}
+
+/**
+ * Test selectors on current LinkedIn page
+ */
+async function handleTestSelectors() {
+    if (!elements.testSelectorsBtn) return;
+    
+    elements.testSelectorsBtn.disabled = true;
+    elements.testSelectorsBtn.textContent = 'Testing...';
+    
+    updateStatus('🧪 Testing selectors on current page...', 30);
+    
+    try {
+        // Get current active tab
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        
+        if (!tab.url?.includes('linkedin.com')) {
+            updateStatus('❌ Navigate to LinkedIn first');
+            elements.testSelectorsBtn.disabled = false;
+            elements.testSelectorsBtn.textContent = '🧪 Test Selectors';
+            return;
+        }
+        
+        // Send message to content script to validate selectors
+        const response = await chrome.tabs.sendMessage(tab.id, {
+            action: 'VALIDATE_SELECTORS'
+        });
+        
+        if (response && response.success) {
+            updateStatus('✅ Selector test complete', 100);
+            
+            // Show results
+            if (response.results) {
+                showSelectorTestResults(response.results);
+            }
+            
+            // Refresh health check
+            await checkSelectorHealth();
+        } else {
+            updateStatus('⚠️ Selector test failed - content script may not be loaded');
+        }
+    } catch (error) {
+        console.error('[POPUP] Selector test error:', error);
+        updateStatus(`❌ Test error: ${error.message}`);
+    } finally {
+        if (elements.testSelectorsBtn) {
+            elements.testSelectorsBtn.disabled = false;
+            elements.testSelectorsBtn.textContent = '🧪 Test Selectors';
+        }
+    }
+}
+
+/**
+ * Show selector test results in a modal or expandable section
+ */
+function showSelectorTestResults(results) {
+    // Show in health details
+    if (elements.healthDetailsContent) {
+        let detailsHTML = '<div style="line-height: 1.6; margin-bottom: 8px;"><strong>Test Results:</strong></div>';
+        
+        Object.keys(results).forEach(key => {
+            const result = results[key];
+            const status = result.working > 0 ? '✅' : '❌';
+            const color = result.working > 0 ? '#28a745' : '#dc3545';
+            
+            detailsHTML += `<div style="color: ${color}; margin-left: 12px; margin-bottom: 4px;">
+                ${status} <strong>${key}</strong>: ${result.working}/${result.tested} working
+            </div>`;
+        });
+        
+        elements.healthDetailsContent.innerHTML = detailsHTML;
+        if (elements.selectorHealthDetails) {
+            elements.selectorHealthDetails.style.display = 'block';
+        }
+    }
+}
+
+/**
+ * Handle manual selector config update
+ */
+async function handleUpdateSelectors() {
+    if (!elements.selectorConfigTextarea) return;
+    
+    const configText = elements.selectorConfigTextarea.value.trim();
+    
+    if (!configText) {
+        updateStatus('❌ Please enter selector configuration');
+        return;
+    }
+    
+    try {
+        const config = JSON.parse(configText);
+        
+        updateStatus('🔄 Updating selectors...', 50);
+        
+        const response = await sendMessage('UPDATE_SELECTOR_CONFIG', {
+            selectors: config
+        });
+        
+        if (response && response.success) {
+            updateStatus('✅ Selectors updated successfully', 100);
+            elements.selectorConfigTextarea.value = '';
+            
+            // Refresh health
+            await checkSelectorHealth();
+        } else {
+            updateStatus(`❌ Update failed: ${response?.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        updateStatus(`❌ Invalid JSON: ${error.message}`);
+    }
+}
+
+/**
+ * Handle reset to default selectors
+ */
+async function handleResetSelectors() {
+    const confirmed = confirm('Reset selectors to defaults? This will clear any custom configurations.');
+    
+    if (!confirmed) return;
+    
+    try {
+        updateStatus('🔄 Resetting to defaults...', 50);
+        
+        const response = await sendMessage('RESET_SELECTOR_CONFIG');
+        
+        if (response && response.success) {
+            updateStatus('✅ Selectors reset to defaults', 100);
+            if (elements.selectorConfigTextarea) {
+                elements.selectorConfigTextarea.value = '';
+            }
+            
+            // Refresh health
+            await checkSelectorHealth();
+        } else {
+            updateStatus(`❌ Reset failed: ${response?.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        updateStatus(`❌ Reset error: ${error.message}`);
+    }
+}
+
+// PHASE 8 ENHANCEMENT: Notification functions
+/**
+ * Show notification banner in popup
+ */
+function showNotification(message, type = 'error') {
+    if (!elements.notificationBanner) return;
+    
+    const banner = elements.notificationBanner;
+    const icon = elements.notificationIcon;
+    const messageEl = elements.notificationMessage;
+    
+    // Set type (error, warning, info)
+    banner.className = `notification-banner ${type}`;
+    
+    // Set icon based on type
+    const icons = {
+        error: '🚨',
+        warning: '⚠️',
+        info: 'ℹ️',
+        linkedin_warning: '🔒'
+    };
+    if (icon) icon.textContent = icons[type] || icons.error;
+    
+    // Set message
+    if (messageEl) messageEl.textContent = message;
+    
+    // Show banner
+    banner.style.display = 'block';
+    
+    // Auto-hide after 10 seconds for non-critical messages
+    if (type !== 'error' && type !== 'linkedin_warning') {
+        setTimeout(() => {
+            hideNotification();
+        }, 10000);
+    }
+}
+
+/**
+ * Hide notification banner
+ */
+function hideNotification() {
+    if (elements.notificationBanner) {
+        elements.notificationBanner.style.display = 'none';
+    }
+}
 
 // --- INITIALIZATION ---
 async function init() {
@@ -2866,6 +3203,9 @@ async function init() {
         // Phase 6: Load saved workbooks
         await loadSavedWorkbooks();
         
+        // Phase 8: Initialize selector health check
+        await checkSelectorHealth();
+        
         // Check if scraping is actually active (persists across popup closes)
         const wasScrapingActive = await checkScrapingStatus();
         if (wasScrapingActive) {
@@ -2928,6 +3268,12 @@ async function init() {
             chrome.tabs.create({ url: href });
         }
     });
+    
+    // Phase 8: Selector Health event listeners
+    elements.testSelectorsBtn?.addEventListener('click', handleTestSelectors);
+    elements.updateSelectorsBtn?.addEventListener('click', handleUpdateSelectors);
+    elements.resetSelectorsBtn?.addEventListener('click', handleResetSelectors);
+    elements.notificationClose?.addEventListener('click', hideNotification);
     
     // Active sheet checkbox listeners (mutually exclusive)
     elements.workbookActiveCheck?.addEventListener('change', (e) => {
