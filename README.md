@@ -76,8 +76,8 @@ Savvy Pirate is architected to eliminate the four primary "fingerprints" that Li
 - 🔄 **Resilient Sync**: Data saved locally first, syncs when online (survives WiFi drops)
 - 🗑️ **Deduplication**: Remove duplicate rows based on Name column with one click
 - 🔄 **Tab Comparison**: Compare weekly scrapes to identify new connections (Phase 7)
-- 🧹 **AI Janitor Cleanup (Google Apps Script)**: Post-process differential lists with Gemini AI to remove non-advisors
-- 💎 **BigQuery Enrichment (Google Apps Script)**: Enrich cleaned lists with CRD numbers, AUM data, and CRM history. Automatically checks if prospects are already in Salesforce (Leads/Opportunities) and provides links to records, dispositions, and closed reasons
+- 💎 **BigQuery Enrichment (Google Apps Script)**: Enrich differential lists with CRD numbers, AUM data, and CRM history. Automatically checks if prospects are already in Salesforce (Leads/Opportunities) and provides links to records, dispositions, and closed reasons
+- 🧹 **AI Janitor Cleanup (Google Apps Script)**: Post-process enriched differential lists with Gemini AI to remove non-advisors. Prioritizes CRD numbers from enrichment to automatically keep registered RIAs
 - 🏴‍☠️ **Pirate Theme**: Dark, stylish UI with black and red color scheme
 
 ---
@@ -221,10 +221,16 @@ The extension needs Google OAuth credentials to access your Google Sheets. Follo
 3. **Set Up Workbooks** → Create workbooks for each competitor
 4. **Scrape Data (Greedy Mode)** → Capture all profiles from LinkedIn search
 5. **Deduplicate** → Remove duplicate entries
-6. **Compare Tabs** → Find new connections from this week (differential list)
-7. **Run AI Janitor on Differential Tab** → Remove obvious non‑advisors using Gemini
-8. **Enrich with BigQuery** → Get CRD numbers, AUM data, and check CRM history. Identify who's already in Salesforce (Leads/Opportunities) to decide on re-engagement vs. new prospects
-9. **Enrich & Distribute** → Enrich clean list in Clay (using CRD numbers), upload to Salesforce, and allocate to SGAs
+6. **Compare Tabs** → Find new connections from this week (differential list) using the extension's Compare Tabs UI
+7. **Navigate to Differential Tab** → Open the new differential tab in your Google Sheets workbook (e.g., `new_connections_week_2`)
+8. **Enrich with BigQuery FIRST** → Run BigQuery enrichment to get CRD numbers, AUM data, and check CRM history. This identifies who's already in Salesforce (Leads/Opportunities) and provides critical data for the Janitor
+9. **Run AI Janitor on Enriched Tab** → Clean the enriched differential list using Gemini AI. The Janitor automatically keeps rows with CRD numbers (registered RIAs) and uses AI to classify ambiguous profiles
+10. **Filter by "New Prospects"** → Focus on `CRM Type = "New Prospect"` - these are the freshest, most malleable leads who just entered your competitor's pipeline and haven't been reached out to yet
+11. **Review Existing Pipeline** → For `CRM Type = "Lead"` or `"Opportunity"`, check Last Activity dates and Closed Lost Reasons. Filter out:
+    - Anyone interacted with within the last 90 days
+    - Anyone that doesn't fit your ICP (Ideal Customer Profile)
+    - Consider re-engaging the rest based on sentiment and timing
+12. **Enrich & Distribute** → Enrich the filtered clean list in Clay (using CRD numbers), upload to Salesforce, and allocate to SGAs
 
 ---
 
@@ -484,63 +490,40 @@ Here's a typical weekly workflow:
 5. ✅ Repeat for all searches
 6. ✅ Deduplicate data
 
-### Next Monday: Weekly Comparison
+### Next Monday: Weekly Comparison & Processing
 1. ✅ Run new scrapes (creates `12_04_25` tab)
 2. ✅ Deduplicate new data
-3. ✅ Open Compare Tabs section
+3. ✅ Open Compare Tabs section in extension
 4. ✅ Compare `11_27_25` (last week) vs `12_04_25` (this week)
-5. ✅ Output: `new_connections_week_2`
-6. ✅ Review new connections
-7. ✅ Target new prospects!
+5. ✅ Output: `new_connections_week_2` (differential tab created)
+6. ✅ Navigate to differential tab in Google Sheets
+7. ✅ Run BigQuery Enrichment FIRST (adds CRD numbers, CRM data, AUM)
+8. ✅ Run AI Janitor (cleans list, auto-keeps CRD rows)
+9. ✅ Filter by "New Prospects" (CRM Type = "New Prospect")
+10. ✅ Review re-engagement candidates (filter by Last Activity >90 days, check sentiment)
+11. ✅ Export filtered list for Clay enrichment and Salesforce upload
+12. ✅ Target new prospects!
 
 ---
 
-### Step 7: Run the AI Janitor on the Differential Tab 🧹
+### Step 7: Navigate to Differential Tab in Google Sheets 📊
 
-At this point you have a **differential tab** (e.g. `new_connections_week_2`) with people who just entered your competitor’s funnel. This list still includes some noise (teachers, nurses, trades, etc.). The **AI Janitor** (a Google Apps Script that uses Gemini) cleans that up for you.
+After running the comparison in the extension's UI, you'll have a new differential tab in your Google Sheets workbook (e.g., `new_connections_week_2` or `new_leads_11_27_25`).
 
-#### 7.1: What the AI Janitor Does
-
-- Works directly **inside Google Sheets** as a custom menu (`🧹 Janitor AI`)
-- Looks at:
-  - **Name**
-  - **Title**
-  - **Accreditation columns (G–L)** – e.g. CFP, CFA, ChFC, etc.
-- Applies three layers of logic:
-  - **Golden Tickets (Auto-Keep)**: If accreditations like `CFP`, `CFA`, `ChFC`, etc. appear in columns G–L, the row is instantly kept as a legit advisor.
-  - **Kill List (Auto-Reject)**: Obvious non‑advisor roles (e.g. Postman, Teacher, Nurse, Driver, Janitor, Trades, etc.) are rejected and moved out without calling AI.
-  - **Gemini AI Review (Ambiguous Cases)**: For everything in the gray area, Gemini (`MODEL_NAME = 'gemini-2.0-flash'`) classifies the profile as **Keep / Reject**, with:
-    - `AI_Status` (Yes/No)
-    - `AI_Category` (e.g. “Accredited Advisor”, “Insurance‑Only”, “Trade”, etc.)
-    - `AI_Reasoning` (short explanation)
-
-Rejected rows are moved into a separate archive tab (`Janitor_Trash_Bin`) so you can always review what was removed.
-
-#### 7.2: How to Run the AI Janitor on a Differential Tab
-
-1. Open your Google Sheet that contains the **differential tab** (e.g. `new_connections_week_2`).
-2. Make sure the tab has standard Savvy Pirate columns (A–F) and any accreditation columns (G–L).
-3. In the Google Sheet menu bar, click **`🧹 Janitor AI`**.
-4. Choose one of:
-   - **`▶️ Clean Selected Rows (Force)`** – run only on the currently selected rows.
-   - **`📑 Clean Specific Tab...`** – enter the differential tab name (e.g. `new_connections_week_2`) to clean the whole tab.
-   - **`📅 Run on ALL Date Tabs`** – bulk clean every dated tab like `11_27_25`, `12_04_25`, etc.
-5. The script:
-   - Adds `AI_Status`, `AI_Category`, `AI_Reasoning` columns if missing.
-   - Auto‑keeps accredited advisors.
-   - Auto‑rejects obvious non‑advisors.
-   - Sends ambiguous titles to Gemini for smart classification.
-   - Moves rejected rows into `Janitor_Trash_Bin`.
-
-After this step, your differential tab holds a **clean list of real advisors / RIAs**.
+1. **Open your Google Sheets workbook** (the one you selected in Workbook Manager)
+2. **Navigate to the differential tab** that was just created
+3. This tab contains all the new connections that entered your competitor's funnel this week
+4. **Important**: The next two steps (Enrichment and Janitor) must be run **in this order** on this differential tab
 
 ---
 
-### Step 8: Enrich with BigQuery (CRM & Advisor Database) 💎
+### Step 8: Enrich with BigQuery FIRST 💎 (CRM & Advisor Database)
 
-After cleaning the differential list with the AI Janitor, you can enrich it with data from your advisor database and check if these prospects are already in your CRM. This is critical for:
+**⚠️ CRITICAL ORDER**: Run BigQuery Enrichment **BEFORE** running the AI Janitor. The Janitor uses CRD numbers from enrichment to automatically keep registered RIAs.
 
-1. **Getting CRD Numbers**: The CRD (Central Registration Depository) number is essential for accurate Clay enrichment later
+The BigQuery Enrichment adds critical data from your advisor database and checks if these prospects are already in your CRM. This is essential for:
+
+1. **Getting CRD Numbers**: The CRD (Central Registration Depository) number is used by the Janitor to automatically keep registered RIAs
 2. **Identifying Existing Pipeline**: See who's already a Lead or Opportunity in Salesforce
 3. **Understanding CRM History**: Check disposition, closed reasons, and last activity dates
 4. **AUM Intelligence**: Get advisor AUM data, growth rates, custodian info, and client breakdowns
@@ -600,8 +583,8 @@ The enricher adds the following columns (starting at Column P):
 
 #### 8.4: How to Run BigQuery Enrichment
 
-1. **Make sure your differential tab is clean** (after running AI Janitor)
-2. **Navigate to the cleaned differential tab** (e.g., `new_connections_week_2`)
+1. **Navigate to the differential tab** in your Google Sheets workbook (e.g., `new_connections_week_2`)
+2. **Make sure this tab is the active tab** (click on it)
 3. **Click `🧹 Janitor AI` menu** in Google Sheets
 4. **Select `💎 Run BigQuery Enrichment`**
 5. The script will:
@@ -609,35 +592,119 @@ The enricher adds the following columns (starting at Column P):
    - Match against your BigQuery advisor database
    - Check Salesforce CRM for existing Leads/Opportunities
    - Add enrichment columns (starting at Column P)
+   - Set "Match Type" to "NO MATCH" for rows that don't find a match
    - Auto-resize columns for readability
 
 #### 8.5: Understanding the Results
 
-- **Match Type**: Shows how confident the match is (LinkedIn match is most reliable)
-- **CRM Type = "New Prospect"**: Not in your CRM yet - these are fresh leads to pursue
+- **Match Type**: Shows how confident the match is (LinkedIn match is most reliable). "NO MATCH" means no match was found in BigQuery
+- **CRM Type = "New Prospect"**: ⭐ **These are your goldmine** - Not in your CRM yet, these are the freshest, most malleable leads who just entered your competitor's pipeline
 - **CRM Type = "Lead" or "Opportunity"**: Already in your pipeline - review sentiment and last activity to decide if you should re-engage
-- **CRD Number**: If populated, you can use this for more accurate Clay enrichment
+- **CRD Number**: If populated, the Janitor will automatically keep these rows (registered RIAs)
 - **AUM Data**: Use this to prioritize high-value advisors
 
-#### 8.6: Using Enriched Data
+#### 8.6: What Happens Next
 
-After enrichment, you can:
+After enrichment, the tab now has:
+- Original scraped data (Columns A-L)
+- AI Status columns (Columns M-O) - will be populated by Janitor
+- BigQuery enrichment data (Columns P-AN) - **now populated**
 
-1. **Filter by CRM Type**:
-   - Focus on "New Prospect" for fresh outreach
-   - Review "Lead" or "Opportunity" to see if re-engagement makes sense
+**Next Step**: Run the AI Janitor (Step 9) which will use the CRD numbers to automatically keep registered RIAs
 
-2. **Prioritize by AUM**:
-   - Sort by "Total AUM (M)" to target largest advisors first
-   - Use growth rates to identify expanding practices
+---
 
-3. **Use CRD for Clay**:
-   - Export rows with CRD numbers
-   - Use CRD in Clay for more accurate firm/contact enrichment
+### Step 9: Run the AI Janitor on the Enriched Differential Tab 🧹
 
-4. **Check CRM History**:
-   - Click Salesforce links to review full history
-   - Check "CRM Sentiment" to understand why they were closed/lost
+**⚠️ IMPORTANT**: Run this **AFTER** BigQuery Enrichment (Step 8). The Janitor uses CRD numbers from enrichment to automatically keep registered RIAs.
+
+At this point you have an **enriched differential tab** (e.g. `new_connections_week_2`) with people who just entered your competitor's funnel, plus BigQuery enrichment data. This list still includes some noise (teachers, nurses, trades, etc.). The **AI Janitor** (a Google Apps Script that uses Gemini) cleans that up for you.
+
+#### 9.1: What the AI Janitor Does
+
+- Works directly **inside Google Sheets** as a custom menu (`🧹 Janitor AI`)
+- **AI columns are always created at Columns M, N, O** (regardless of enrichment columns)
+- Looks at:
+  - **Name** (Column B)
+  - **Title** (Column C)
+  - **Accreditation columns (G–L)** – e.g. CFP, CFA, ChFC, etc.
+  - **CRD Number** (Column P+ from BigQuery enrichment) – **Highest Priority**
+- Applies four layers of logic (in order):
+  1. **CRD Number Check (Highest Priority)**: If BigQuery enrichment found a CRD number, the row is **automatically kept** as a registered RIA. No AI needed.
+  2. **Golden Tickets (Auto-Keep)**: If accreditations like `CFP`, `CFA`, `ChFC`, etc. appear in columns G–L, the row is instantly kept as a legit advisor.
+  3. **Kill List (Auto-Reject)**: Obvious non‑advisor roles (e.g. Postman, Teacher, Nurse, Driver, Janitor, Trades, etc.) are rejected and moved out without calling AI.
+  4. **Gemini AI Review (Ambiguous Cases)**: For everything in the gray area, Gemini (`MODEL_NAME = 'gemini-2.0-flash'`) classifies the profile as **Keep / Reject**, with:
+     - `AI_Status` (Yes/No) in Column M
+     - `AI_Category` (e.g. "Accredited Advisor", "Insurance‑Only", "Trade", etc.) in Column N
+     - `AI_Reasoning` (short explanation) in Column O
+
+Rejected rows are moved into a separate archive tab (`Janitor_Trash_Bin`) so you can always review what was removed.
+
+#### 9.2: How to Run the AI Janitor on an Enriched Differential Tab
+
+1. **Make sure you're on the enriched differential tab** (e.g., `new_connections_week_2`)
+2. **Verify BigQuery enrichment has run** (you should see columns P-AN populated)
+3. In the Google Sheet menu bar, click **`🧹 Janitor AI`**
+4. Choose one of:
+   - **`📑 Clean Specific Tab...`** – enter the differential tab name (e.g. `new_connections_week_2`) to clean the whole tab. **Recommended for differential tabs.**
+   - **`▶️ Clean Selected Rows (Force)`** – run only on the currently selected rows
+   - **`📅 Run on ALL Date Tabs`** – bulk clean every dated tab like `11_27_25`, `12_04_25`, etc.
+5. The script:
+   - Creates `AI_Status`, `AI_Category`, `AI_Reasoning` columns at Columns M, N, O (if missing)
+   - **Automatically keeps rows with CRD numbers** (from BigQuery enrichment)
+   - Auto‑keeps accredited advisors
+   - Auto‑rejects obvious non‑advisors
+   - Sends ambiguous titles to Gemini for smart classification
+   - Moves rejected rows into `Janitor_Trash_Bin`
+
+After this step, your differential tab holds a **clean list of real advisors / RIAs** with AI classification and CRM data.
+
+---
+
+### Step 10: Filter and Prioritize Leads 🎯
+
+Now that your differential tab is enriched and cleaned, it's time to identify the best leads to pursue.
+
+#### 10.1: Filter by "New Prospects" (Highest Priority)
+
+**These are your goldmine leads** - people who just entered your competitor's pipeline and haven't been reached out to yet.
+
+1. **Filter the "CRM Type" column** (Column Q) to show only **"New Prospect"**
+2. These are the **freshest, most malleable leads** you can get
+3. They're already:
+   - ✅ Cleaned by the AI Janitor (real advisors/RIAs)
+   - ✅ Enriched with CRD numbers, AUM data, and other intelligence
+   - ✅ Not yet in your CRM (no previous touchpoints)
+
+**Action**: Export or copy this filtered list for immediate outreach.
+
+#### 10.2: Review Existing Pipeline (Re-engagement Candidates)
+
+For rows where `CRM Type = "Lead"` or `"Opportunity"`:
+
+1. **Check "Last Activity" column** (Column T):
+   - **Filter out**: Anyone with activity within the last 90 days (too recent to re-engage)
+   - **Consider**: Anyone with activity older than 90 days (may be worth re-engaging)
+
+2. **Check "CRM Sentiment" column** (Column S):
+   - Review Closed Lost Reasons or Dispositions
+   - **Filter out**: Anyone that doesn't fit your ICP (Ideal Customer Profile)
+   - **Consider**: Those with positive sentiment or timing-related closures
+
+3. **Review Salesforce Links** (Column U):
+   - Click the links to review full CRM history
+   - Understand why they were closed/lost
+   - Make informed decisions about re-engagement
+
+**Action**: Create a separate filtered view for re-engagement candidates based on your criteria.
+
+#### 10.3: Prioritize by AUM and Growth
+
+For both "New Prospects" and re-engagement candidates:
+
+1. **Sort by "Total AUM (M)"** (Column R) to target largest advisors first
+2. **Review "Growth Rate (5yr)" and "Growth Rate (1yr)"** (Columns S-T) to identify expanding practices
+3. **Check "% Clients: HNW"** (Column X) to focus on high net worth advisors
 
 ---
 
@@ -691,27 +758,31 @@ Once this is installed, you (or anyone else using the repo) can:
 
 From there, you follow the complete flow:
 
-- **Savvy Pirate** scrapes in greedy mode → **Compare Tabs** builds the differential → **AI Janitor** cleans → **BigQuery Enrichment** adds CRM/AUM data → **Clay** enriches (using CRD numbers) → **Salesforce & SGAs** execute.
+- **Savvy Pirate** scrapes in greedy mode → **Compare Tabs** builds the differential → **BigQuery Enrichment** adds CRM/AUM data (run FIRST) → **AI Janitor** cleans (uses CRD numbers to auto-keep RIAs) → **Filter by "New Prospects"** → **Clay** enriches (using CRD numbers) → **Salesforce & SGAs** execute.
 
 ---
 
-### Step 9: Enrich in Clay, Upload to Salesforce, and Allocate to SGAs
+### Step 11: Enrich in Clay, Upload to Salesforce, and Allocate to SGAs
 
-Once the AI Janitor has cleaned your differential list and BigQuery Enrichment has added CRM/AUM data:
+Once you've filtered your differential list to focus on "New Prospects" and selected re-engagement candidates:
 
-1. **Export / connect the clean tab to Clay**
-   - Use Clay to enrich each advisor with additional data (emails, firm, AUM signals, etc.).
+1. **Export / connect the filtered clean tab to Clay**
+   - Use Clay to enrich each advisor with additional data (emails, firm, AUM signals, etc.)
+   - **Use CRD numbers** (from BigQuery enrichment) for more accurate firm/contact enrichment
 2. **Upload the enriched list to Salesforce**
-   - Import as Leads / Contacts depending on your CRM model.
+   - Import as Leads / Contacts depending on your CRM model
+   - Tag them appropriately (e.g., "Competitor Pipeline - New Prospect")
 3. **Allocate to SGAs (Sales Growth Advisors)**
-   - Use your routing rules (territory, team, seniority) to assign leads from the clean, enriched list.
+   - Use your routing rules (territory, team, seniority) to assign leads from the clean, enriched list
 4. **Sales execution**
    - SGAs work the list knowing:
-     - These people **just entered a competitor’s funnel**
-     - They are **already filtered** to real advisor‑type profiles
+     - These people **just entered a competitor's funnel** (fresh, malleable leads)
+     - They are **already filtered** to real advisor‑type profiles (cleaned by AI Janitor)
+     - They have **CRD numbers and AUM data** (enriched by BigQuery)
+     - They are **"New Prospects"** (not yet in your CRM, or re-engagement candidates with >90 days since last activity)
 
 This completes the full loop:
-- **Scrape (Savvy Pirate in greedy mode) → Differential (Compare Tabs) → Clean (AI Janitor) → Enrich (Clay) → Sell (Salesforce + SGAs).**
+- **Scrape (Savvy Pirate in greedy mode) → Compare (Tab Comparison UI) → Enrich (BigQuery FIRST) → Clean (AI Janitor) → Filter (New Prospects + Re-engagement) → Enrich (Clay) → Sell (Salesforce + SGAs).**
 
 ---
 

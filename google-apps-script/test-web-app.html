@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Apps Script Web App Tester</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 30px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: bold;
+      color: #555;
+    }
+    input, select {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #4285f4;
+      color: white;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+    button:hover {
+      background: #357ae8;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .result {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 4px;
+      display: none;
+    }
+    .result.success {
+      background: #d4edda;
+      border: 1px solid #c3e6cb;
+      color: #155724;
+      display: block;
+    }
+    .result.error {
+      background: #f8d7da;
+      border: 1px solid #f5c6cb;
+      color: #721c24;
+      display: block;
+    }
+    .result.info {
+      background: #d1ecf1;
+      border: 1px solid #bee5eb;
+      color: #0c5460;
+      display: block;
+    }
+    pre {
+      background: #f8f9fa;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin-top: 10px;
+    }
+    .instructions {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+    .instructions h3 {
+      margin-top: 0;
+      color: #856404;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧪 Apps Script Web App Tester</h1>
+    
+    <div class="instructions">
+      <h3>📋 Instructions:</h3>
+      <ol>
+        <li>Paste your Web App URL below (ends with /exec)</li>
+        <li>Select the action (cleanTab or enrichTab)</li>
+        <li>Enter a tab name that exists in your spreadsheet</li>
+        <li>Click "Test Web App" to send the request</li>
+        <li>Check the result below</li>
+      </ol>
+    </div>
+    
+    <form id="testForm">
+      <div class="form-group">
+        <label for="webAppUrl">Web App URL:</label>
+        <input 
+          type="text" 
+          id="webAppUrl" 
+          placeholder="https://script.google.com/macros/s/.../exec"
+          required
+        />
+      </div>
+      
+      <div class="form-group">
+        <label for="action">Action:</label>
+        <select id="action" required>
+          <option value="cleanTab">cleanTab (Janitor AI)</option>
+          <option value="enrichTab">enrichTab (BigQuery Enrichment)</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label for="tabName">Tab Name:</label>
+        <input 
+          type="text" 
+          id="tabName" 
+          placeholder="e.g., new_leads_11_30_25"
+          required
+        />
+      </div>
+      
+      <button type="submit" id="testBtn">🧪 Test Web App</button>
+      <button type="button" id="copyCurlBtn">📋 Copy cURL Command</button>
+    </form>
+    
+    <div id="result" class="result"></div>
+  </div>
+  
+  <script>
+    const form = document.getElementById('testForm');
+    const resultDiv = document.getElementById('result');
+    const testBtn = document.getElementById('testBtn');
+    const copyCurlBtn = document.getElementById('copyCurlBtn');
+    
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const webAppUrl = document.getElementById('webAppUrl').value.trim();
+      const action = document.getElementById('action').value;
+      const tabName = document.getElementById('tabName').value.trim();
+      
+      if (!webAppUrl || !action || !tabName) {
+        showResult('error', 'Please fill in all fields');
+        return;
+      }
+      
+      // Disable button
+      testBtn.disabled = true;
+      testBtn.textContent = '⏳ Testing...';
+      resultDiv.className = 'result info';
+      resultDiv.innerHTML = '⏳ Sending request...';
+      
+      try {
+        // Create form data (same format as Chrome extension)
+        const formData = new URLSearchParams();
+        formData.append('action', action);
+        formData.append('tabName', tabName);
+        
+        console.log('Sending request:', {
+          url: webAppUrl,
+          action: action,
+          tabName: tabName,
+          body: formData.toString()
+        });
+        
+        const response = await fetch(webAppUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: formData.toString(),
+          mode: 'cors'
+        });
+        
+        console.log('Response status:', response.status, response.statusText);
+        
+        const responseText = await response.text();
+        console.log('Response body:', responseText);
+        
+        let result;
+        try {
+          result = JSON.parse(responseText);
+        } catch (e) {
+          showResult('error', `Failed to parse JSON response:\n\n${responseText}`);
+          return;
+        }
+        
+        if (result.success) {
+          showResult('success', 
+            `✅ SUCCESS!\n\n` +
+            `Message: ${result.message || 'No message'}\n\n` +
+            `Details:\n${JSON.stringify(result.details || {}, null, 2)}`
+          );
+        } else {
+          showResult('error', 
+            `❌ FAILED\n\n` +
+            `Error: ${result.error || 'Unknown error'}\n\n` +
+            `Full response:\n${JSON.stringify(result, null, 2)}`
+          );
+        }
+        
+      } catch (error) {
+        console.error('Request error:', error);
+        showResult('error', 
+          `❌ Request Failed\n\n` +
+          `Error: ${error.message}\n\n` +
+          `This might be a CORS error. Make sure:\n` +
+          `1. Web App is deployed with "Anyone" access\n` +
+          `2. URL ends with /exec\n` +
+          `3. Web App is the latest version`
+        );
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = '🧪 Test Web App';
+      }
+    });
+    
+    copyCurlBtn.addEventListener('click', () => {
+      const webAppUrl = document.getElementById('webAppUrl').value.trim();
+      const action = document.getElementById('action').value;
+      const tabName = document.getElementById('tabName').value.trim();
+      
+      if (!webAppUrl || !action || !tabName) {
+        alert('Please fill in all fields first');
+        return;
+      }
+      
+      const curlCommand = `curl -X POST "${webAppUrl}" \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "action=${action}&tabName=${encodeURIComponent(tabName)}"`;
+      
+      navigator.clipboard.writeText(curlCommand).then(() => {
+        alert('✅ cURL command copied to clipboard!\n\nPaste it in your terminal to test.');
+      }).catch(() => {
+        // Fallback: show in alert
+        prompt('Copy this cURL command:', curlCommand);
+      });
+    });
+    
+    function showResult(type, message) {
+      resultDiv.className = `result ${type}`;
+      resultDiv.innerHTML = `<pre>${message}</pre>`;
+    }
+    
+    // Load saved URL from localStorage
+    const savedUrl = localStorage.getItem('webAppUrl');
+    if (savedUrl) {
+      document.getElementById('webAppUrl').value = savedUrl;
+    }
+    
+    // Save URL to localStorage when changed
+    document.getElementById('webAppUrl').addEventListener('change', (e) => {
+      localStorage.setItem('webAppUrl', e.target.value);
+    });
+  </script>
+</body>
+</html>
+

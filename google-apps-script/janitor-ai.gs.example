@@ -135,24 +135,67 @@ function cleanSpecificTab() {
 // =======================
 
 function processSheet(sheet, forceAll = false, startRowOverride = null, numRowsOverride = null) {
-  const lastCol = sheet.getLastColumn();
+  // 1. Setup Headers - AI columns should ALWAYS be at columns M, N, O (13, 14, 15)
+  const AI_COL_START = 13; // Column M (1-based indexing)
+  const headerRow = 1;
   
-  // 1. Setup Headers
-  const headerRange = sheet.getRange(1, 1, 1, lastCol);
-  const headers = headerRange.getValues()[0];
+  // Read current headers to check what's in columns M, N, O
+  let lastCol = sheet.getLastColumn();
+  const maxColToRead = Math.max(lastCol, AI_COL_START + AI_HEADERS.length - 1);
+  let headerRange = sheet.getRange(headerRow, 1, 1, maxColToRead);
+  let headers = headerRange.getValues()[0];
   let aiStatusColIndex = headers.indexOf('AI_Status');
   
-  if (aiStatusColIndex === -1) {
-    sheet.getRange(1, lastCol + 1, 1, AI_HEADERS.length).setValues([AI_HEADERS]);
+  // Check if AI_Status is in the correct position (column M, index 12 in 0-based)
+  const expectedIndex = AI_COL_START - 1; // 12 (0-based) = Column M (13 in 1-based)
+  
+  if (aiStatusColIndex !== expectedIndex) {
+    // Either doesn't exist or is in wrong position - create/overwrite at correct position
+    Logger.log(`[Janitor] Creating AI columns at columns M, N, O (${AI_COL_START}-${AI_COL_START + AI_HEADERS.length - 1})`);
+    Logger.log(`[Janitor] Headers to create: ${AI_HEADERS.join(', ')}`);
+    
+    // Create/overwrite the header row at the fixed position
+    const newHeaderRange = sheet.getRange(headerRow, AI_COL_START, 1, AI_HEADERS.length);
+    newHeaderRange.setValues([AI_HEADERS]);
+    newHeaderRange.setFontWeight("bold");
+    newHeaderRange.setBackground("#E8F0FE");
     SpreadsheetApp.flush();
-    aiStatusColIndex = lastCol;
+    
+    // Verify the columns were written
+    const verifyRange = sheet.getRange(headerRow, AI_COL_START, 1, AI_HEADERS.length);
+    const verifyValues = verifyRange.getValues()[0];
+    Logger.log(`[Janitor] Verified headers written: ${verifyValues.join(', ')}`);
+    
+    // Re-read headers to confirm
+    lastCol = sheet.getLastColumn();
+    const allHeadersRange = sheet.getRange(headerRow, 1, 1, Math.max(lastCol, AI_COL_START + AI_HEADERS.length - 1));
+    headers = allHeadersRange.getValues()[0];
+    aiStatusColIndex = headers.indexOf('AI_Status');
+    
+    // Verify it's in the correct position
+    if (aiStatusColIndex !== expectedIndex) {
+      const errorMsg = `Failed to create AI_Status at column M. Found at index ${aiStatusColIndex}, expected ${expectedIndex}`;
+      Logger.log(`[Janitor] ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+    
+    Logger.log(`[Janitor] ✅ AI_Status column created at column M (index ${aiStatusColIndex}, column ${aiStatusColIndex + 1})`);
+  } else {
+    Logger.log(`[Janitor] AI_Status column already exists at column M (index ${aiStatusColIndex}, column ${aiStatusColIndex + 1})`);
   }
+  
+  // Ensure we have the correct last column after header setup
+  const finalLastCol = sheet.getLastColumn();
 
   // 2. DYNAMIC COLUMN FINDER
   let TITLE_IDX = headers.findIndex(h => h.match(/Title|Position/i));
   let NAME_IDX = headers.findIndex(h => h.match(/Name/i));
   if (TITLE_IDX === -1) TITLE_IDX = 2; // Default C
   if (NAME_IDX === -1) NAME_IDX = 1;   // Default B
+  
+  // 2.5. Check for CRD Number column (from BigQuery enrichment - optional)
+  // CRD Number indicates a registered RIA - automatically keep these people
+  const CRD_COL_INDEX = headers.findIndex(h => h === 'CRD Number');
 
   // 3. Define Range
   const start = startRowOverride || 2;
@@ -160,8 +203,9 @@ function processSheet(sheet, forceAll = false, startRowOverride = null, numRowsO
   const count = numRowsOverride || (totalRows - 1);
   if (count <= 0) return { total: 0, kept: 0, removed: 0 };
 
-  // Read data (include Accreditations G-L, approx cols 6-11)
-  const dataRange = sheet.getRange(start, 1, count, sheet.getLastColumn());
+  // Read data (include Accreditations G-L, approx cols 6-11, and any enrichment columns)
+  // Make sure we read all columns including AI_Status columns
+  const dataRange = sheet.getRange(start, 1, count, finalLastCol);
   const data = dataRange.getValues();
   
   let stats = { total: 0, kept: 0, removed: 0 };
@@ -181,7 +225,21 @@ function processSheet(sheet, forceAll = false, startRowOverride = null, numRowsO
     const rowName = data[i][NAME_IDX];
     const rowNum = start + i;
 
-    // --- A. GOLDEN TICKET CHECK (Accreditations) ---
+    // --- A. CRD NUMBER CHECK (Highest Priority - Auto-Keep if CRD exists) ---
+    // If BigQuery enrichment found a CRD number, this person is a registered RIA
+    // Skip all other checks and automatically keep them
+    if (CRD_COL_INDEX !== -1 && data[i].length > CRD_COL_INDEX) {
+      const crdValue = String(data[i][CRD_COL_INDEX] || "").trim();
+      if (crdValue !== "" && crdValue !== "null" && crdValue !== "undefined" && crdValue !== "NO MATCH") {
+        // Has CRD number - automatically keep, no AI needed
+        sheet.getRange(rowNum, aiStatusColIndex + 1, 1, 3).setValues([["Yes", "Registered RIA (CRD)", `CRD: ${crdValue}`]]);
+        stats.total++;
+        stats.kept++;
+        continue; // Skip to next row
+      }
+    }
+
+    // --- B. GOLDEN TICKET CHECK (Accreditations) ---
     // Scan columns G(6) through L(11) for Accreditations
     let isAccredited = false;
     let foundAccreditation = "";
@@ -209,7 +267,7 @@ function processSheet(sheet, forceAll = false, startRowOverride = null, numRowsO
       continue; // Skip to next row
     }
 
-    // --- B. LOCAL KILL CHECK ---
+    // --- C. LOCAL KILL CHECK ---
     if (!rowTitle) continue;
     const lowerTitle = rowTitle.toLowerCase();
     let instantKill = false;
@@ -224,7 +282,7 @@ function processSheet(sheet, forceAll = false, startRowOverride = null, numRowsO
     }
     if (instantKill) continue;
 
-    // --- C. AI BATCHING (Only for the ambiguous ones) ---
+    // --- D. AI BATCHING (Only for the ambiguous ones) ---
     batch.push({ rowIndex: rowNum, name: rowName, title: rowTitle });
 
     if (batch.length >= BATCH_SIZE) {
