@@ -51,3 +51,6 @@ coverage/
 
 # Google Apps Script files with API keys - keep private
 google-apps-script/janitor-ai.gs
+
+# Local Apps Script testing setup (optional - for agentic development)
+sheet-integration/
