@@ -95,6 +95,35 @@ export async function createSheet(title) {
 }
 
 /**
+ * Normalize LinkedIn URL for consistent comparison
+ * Removes query params, trailing slashes, and normalizes http/https
+ * @param {string} url - LinkedIn URL to normalize
+ * @returns {string} Normalized URL or empty string if invalid
+ */
+function normalizeLinkedInUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    
+    let normalized = url.trim();
+    if (!normalized) return '';
+    
+    // Remove query parameters
+    if (normalized.includes('?')) {
+        normalized = normalized.split('?')[0];
+    }
+    
+    // Remove trailing slashes
+    normalized = normalized.replace(/\/+$/, '');
+    
+    // Normalize http/https (convert http to https for consistency)
+    normalized = normalized.replace(/^http:\/\//i, 'https://');
+    
+    // Convert to lowercase for case-insensitive comparison
+    normalized = normalized.toLowerCase();
+    
+    return normalized;
+}
+
+/**
  * Append rows to a spreadsheet with automatic deduplication
  * @param {string} spreadsheetId - Target spreadsheet ID
  * @param {Array<Array>} rows - Array of row arrays
@@ -114,31 +143,35 @@ export async function appendRows(spreadsheetId, rows, deduplicate = false, tabNa
         try {
             // Read existing data to check for duplicates
             const existingData = await readSheet(spreadsheetId, `${tabName}!A:Z`);
-            const existingNames = new Set();
+            const existingUrls = new Set();
             
-            // Skip header row and collect existing names (Name is column B, index 1)
+            // Skip header row and collect existing LinkedIn URLs (LinkedIn URL is column F, index 5)
             for (let i = 1; i < existingData.length; i++) {
-                const name = existingData[i][1]; // Name column (index 1)
-                if (name) {
-                    existingNames.add(name.toLowerCase().trim());
+                const url = existingData[i][5]; // LinkedIn URL column (index 5)
+                if (url) {
+                    const normalizedUrl = normalizeLinkedInUrl(url);
+                    if (normalizedUrl) {
+                        existingUrls.add(normalizedUrl);
+                    }
                 }
             }
             
-            // Filter out rows with duplicate names
+            // Filter out rows with duplicate LinkedIn URLs
             rows = rows.filter(row => {
-                const name = row[1]; // Name column (index 1)
-                if (!name) return true; // Keep rows without names
-                const nameKey = name.toLowerCase().trim();
-                if (existingNames.has(nameKey)) {
+                const url = row[5]; // LinkedIn URL column (index 5)
+                if (!url) return true; // Keep rows without URLs (they might be valid)
+                const normalizedUrl = normalizeLinkedInUrl(url);
+                if (!normalizedUrl) return true; // Keep rows with invalid URLs
+                if (existingUrls.has(normalizedUrl)) {
                     return false; // Duplicate, skip
                 }
-                existingNames.add(nameKey); // Add to set for future checks in this batch
-                return true; // New name, keep
+                existingUrls.add(normalizedUrl); // Add to set for future checks in this batch
+                return true; // New URL, keep
             });
             
             const duplicatesRemoved = originalCount - rows.length;
             if (duplicatesRemoved > 0) {
-                console.log(`[SHEETS] Filtered out ${duplicatesRemoved} duplicate(s) before appending`);
+                console.log(`[SHEETS] Filtered out ${duplicatesRemoved} duplicate(s) before appending (based on LinkedIn URL)`);
             }
         } catch (error) {
             console.warn('[SHEETS] Deduplication check failed, appending all rows:', error.message);
@@ -440,14 +473,14 @@ export async function getSheetTabs(spreadsheetId) {
 }
 
 /**
- * Deduplicate a spreadsheet based on the Name column (column B, index 1)
- * Keeps the first occurrence of each name
+ * Deduplicate a spreadsheet based on the LinkedIn URL column (column F, index 5)
+ * Keeps the first occurrence of each LinkedIn URL
  * @param {string} spreadsheetId - Target spreadsheet ID
  * @param {string} tabName - Tab name to deduplicate (default: 'Sheet1')
  * @returns {Promise<{removed: number, total: number, unique: number}>}
  */
 export async function deduplicateSheet(spreadsheetId, tabName = 'Sheet1') {
-    console.log(`[SHEETS] Deduplicating ${spreadsheetId.substring(0, 10)} (tab: ${tabName})...`);
+    console.log(`[SHEETS] Deduplicating ${spreadsheetId.substring(0, 10)} (tab: ${tabName}) based on LinkedIn URL...`);
     
     // Format tab name for range (handle spaces and special characters)
     const formattedTabName = formatTabNameForRange(tabName);
@@ -466,8 +499,8 @@ export async function deduplicateSheet(spreadsheetId, tabName = 'Sheet1') {
     
     console.log(`[SHEETS] Found ${originalCount} data rows to process`);
     
-    // Deduplicate based on Name column (index 1)
-    const seenNames = new Set();
+    // Deduplicate based on LinkedIn URL column (index 5, column F)
+    const seenUrls = new Set();
     const uniqueRows = [];
     let duplicateCount = 0;
     
@@ -477,26 +510,32 @@ export async function deduplicateSheet(spreadsheetId, tabName = 'Sheet1') {
             continue;
         }
         
-        // Name column is index 1 (column B)
-        const name = row[1];
+        // LinkedIn URL column is index 5 (column F)
+        const url = row[5];
         
-        // Handle empty or undefined names
-        if (!name || String(name).trim() === '') {
-            // Keep rows without names (they might be valid)
+        // Handle empty or undefined URLs
+        if (!url || String(url).trim() === '') {
+            // Keep rows without URLs (they might be valid)
             uniqueRows.push(row);
             continue;
         }
         
-        // Normalize name for comparison (case-insensitive, trimmed)
-        const nameKey = String(name).toLowerCase().trim();
+        // Normalize LinkedIn URL for comparison
+        const normalizedUrl = normalizeLinkedInUrl(url);
         
-        // Check if we've seen this name before
-        if (!seenNames.has(nameKey)) {
-            seenNames.add(nameKey);
+        // If URL is invalid after normalization, keep the row (might be valid data)
+        if (!normalizedUrl) {
+            uniqueRows.push(row);
+            continue;
+        }
+        
+        // Check if we've seen this URL before
+        if (!seenUrls.has(normalizedUrl)) {
+            seenUrls.add(normalizedUrl);
             uniqueRows.push(row);
         } else {
             duplicateCount++;
-            console.log(`[SHEETS] Duplicate #${duplicateCount} found and skipped: "${name}"`);
+            console.log(`[SHEETS] Duplicate #${duplicateCount} found and skipped: "${url}"`);
         }
     }
     

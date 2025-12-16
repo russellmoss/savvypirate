@@ -328,8 +328,16 @@
         const fallbacks = {
             profileCard: ['div[data-view-name="people-search-result"]'],
             nameLink: ['a[data-view-name="search-result-lockup-title"]'],
-            title: ['p:nth-of-type(2)'],
-            location: ['p:nth-of-type(3)'],
+            title: [
+                'div.acd09c55 > p',
+                'div._3c8635b4.b537fe1d.a90e6a91.b351b4d3.febc4ac2.acd09c55.f54c229b > p',
+                'p:nth-of-type(2)'
+            ],
+            location: [
+                'div.bb0216de > p',
+                'div._3c8635b4.b537fe1d.a90e6a91.b351b4d3.febc4ac2.bb0216de.f54c229b > p',
+                'p:nth-of-type(3)'
+            ],
             connectionSource: ['a[data-view-name="search-result-social-proof-insight"]'],
             nextButton: ['button[aria-label="Next"]'],
             linkedInWarning: ['[data-test-id="security-challenge"]', '.challenge-dialog']

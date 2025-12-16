@@ -52,15 +52,19 @@ export const DEFAULT_SELECTORS = {
      * Multiple strategies to find the job title text
      */
     title: [
-        // Strategy 1: Entity result subtitle (most common)
+        // Strategy 1: New LinkedIn structure - div with acd09c55 class (title container)
+        'div.acd09c55 > p',
+        // Strategy 2: More specific - full class chain for title
+        'div._3c8635b4.b537fe1d.a90e6a91.b351b4d3.febc4ac2.acd09c55.f54c229b > p',
+        // Strategy 3: Entity result subtitle (most common legacy)
         '.entity-result__primary-subtitle',
-        // Strategy 2: Generic subtitle
+        // Strategy 4: Generic subtitle
         '.entity-result__subtitle',
-        // Strategy 3: Search result subtitle
+        // Strategy 5: Search result subtitle
         '.search-result__subtitle',
-        // Strategy 4: Second <p> tag in card (common pattern)
+        // Strategy 6: Second <p> tag in card (common pattern)
         'p:nth-of-type(2)',
-        // Strategy 5: Generic subtitle class
+        // Strategy 7: Generic subtitle class
         '.subline'
     ],
 
@@ -69,13 +73,17 @@ export const DEFAULT_SELECTORS = {
      * Multiple strategies to find location text
      */
     location: [
-        // Strategy 1: Entity result secondary subtitle
+        // Strategy 1: New LinkedIn structure - div with bb0216de class (location container)
+        'div.bb0216de > p',
+        // Strategy 2: More specific - full class chain for location
+        'div._3c8635b4.b537fe1d.a90e6a91.b351b4d3.febc4ac2.bb0216de.f54c229b > p',
+        // Strategy 3: Entity result secondary subtitle (legacy)
         '.entity-result__secondary-subtitle',
-        // Strategy 2: Search result metadata
+        // Strategy 4: Search result metadata
         '.search-result__metadata',
-        // Strategy 3: Third <p> tag in card
+        // Strategy 5: Third <p> tag in card
         'p:nth-of-type(3)',
-        // Strategy 4: Location-specific class
+        // Strategy 6: Location-specific class
         '.search-result__location'
     ],
 

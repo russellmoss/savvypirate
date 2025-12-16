@@ -394,6 +394,24 @@ async function processSourceGroup(sourceName, workbookId, searches, sourceIndex)
                 
                 console.log(`[SW] ✅ Completed search: ${completionData.totalProfiles} profiles`);
                 
+                // Deduplicate after each search (based on LinkedIn URL)
+                console.log(`[SW] Deduplicating workbook after search ${searchNum}...`);
+                try {
+                    const dedupeResult = await sendMessageToSelf('DEDUPLICATE_SHEET', {
+                        spreadsheetId: workbookId,
+                        tabName: tabName
+                    });
+                    
+                    if (dedupeResult.success) {
+                        console.log(`[SW] ✅ Deduplicated after search ${searchNum}: removed ${dedupeResult.removedCount || 0} duplicates`);
+                    } else {
+                        console.error(`[SW] Deduplication failed after search ${searchNum}:`, dedupeResult.error);
+                    }
+                } catch (dedupeError) {
+                    console.error(`[SW] Error during deduplication after search ${searchNum}:`, dedupeError);
+                    // Continue even if deduplication fails
+                }
+                
                 // Delay before next search (30-60 seconds, random)
                 // Use shorter chunks to keep service worker alive
                 if (i < searches.length - 1) {
@@ -433,18 +451,8 @@ async function processSourceGroup(sourceName, workbookId, searches, sourceIndex)
             }
         }
         
-        // Step 4: Deduplicate workbook after all searches
-        console.log(`[SW] Deduplicating workbook for ${sourceName}...`);
-        const dedupeResult = await sendMessageToSelf('DEDUPLICATE_SHEET', {
-            spreadsheetId: workbookId,
-            tabName: tabName
-        });
-        
-        if (dedupeResult.success) {
-            console.log(`[SW] ✅ Deduplicated: removed ${dedupeResult.removedCount || 0} duplicates`);
-        } else {
-            console.error(`[SW] Deduplication failed:`, dedupeResult.error);
-        }
+        // Note: Deduplication now runs after each individual search (see above)
+        // This ensures duplicates are removed immediately rather than accumulating
         
     } catch (error) {
         console.error(`[SW] Error processing source ${sourceName}:`, error);
@@ -1776,10 +1784,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // CRITICAL: Keep channel open for async response
 });
 
-// --- INITIALIZATION ---
-chrome.runtime.onInstalled.addListener(() => {
-    console.log('[SW] Savvy Pirate installed');
-    startQueueProcessor(); // Start periodic queue processing
+// --- SIDEBAR MANAGEMENT ---
+// Open sidebar when extension icon is clicked
+chrome.action.onClicked.addListener(async (tab) => {
+    try {
+        await chrome.sidePanel.open({ windowId: tab.windowId });
+        console.log('[SW] Sidebar opened');
+    } catch (error) {
+        console.error('[SW] Error opening sidebar:', error);
+    }
 });
 
 // Load settings and start queue processor on startup

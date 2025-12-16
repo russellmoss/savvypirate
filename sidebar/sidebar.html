@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Savvy Pirate</title>
+    <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Notification Banner (NEW - Phase 8 Enhancement) -->
+        <div class="notification-banner" id="notificationBanner" style="display: none;">
+            <div class="notification-content">
+                <span class="notification-icon" id="notificationIcon">⚠️</span>
+                <span class="notification-message" id="notificationMessage"></span>
+                <button class="notification-close" id="notificationClose">×</button>
+            </div>
+        </div>
+
+        <!-- Header -->
+        <header class="header">
+            <h1><img src="../icons/icon16.png" alt="Skull" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 4px;"> Savvy Pirate</h1>
+            <div class="status-indicator" id="connectionStatus">
+                <span class="dot"></span>
+                <span class="text">Disconnected</span>
+            </div>
+        </header>
+
+        <!-- Input Sheet Section -->
+        <section class="section">
+            <h2>📥 Input Sheet</h2>
+            <div class="input-row">
+                <input type="text" id="inputSheetId" placeholder="Google Sheet ID">
+                <button id="loadSearchesBtn" class="btn btn-secondary">Load</button>
+            </div>
+            <!-- Search Progress Indicator (NEW) -->
+            <div class="search-progress" id="searchProgress">
+                <span class="progress-text" id="searchProgressText">Search 0 of 0</span>
+                <div class="progress-bar-mini">
+                    <div class="progress-fill-mini" id="searchProgressFill"></div>
+                </div>
+                <button id="refreshProgressBtn" class="btn-refresh" title="Reset search progress (removes checkmarks)" style="display: none;">
+                    🔄 Reset
+                </button>
+            </div>
+            <!-- Person-Based Selection (NEW) -->
+            <div class="person-selection-section" id="personSelectionSection" style="display: none;">
+                <h3 style="font-size: 12px; color: #888; margin-bottom: 8px; font-weight: 500;">👤 Select by Person:</h3>
+                <div class="person-list" id="personList">
+                    <!-- Dynamically populated with person checkboxes -->
+                </div>
+            </div>
+            <div class="search-list" id="searchList">
+                <p class="placeholder">Click "Load" to fetch searches...</p>
+            </div>
+        </section>
+
+        <!-- Source Mapping Section (NEW - Phase 8) -->
+        <section class="section mapping-section" id="mappingSection" style="display: none;">
+            <h2>🔗 Source → Workbook Mapping</h2>
+            <p class="section-description">
+                Map each Source Connection to its destination workbook. All sources must be mapped before Auto-Run.
+            </p>
+            
+            <!-- Mapping Status -->
+            <div class="mapping-status-bar" id="mappingStatusBar">
+                <span class="mapped-count">Mapped: <strong id="mappedCount">0</strong></span>
+                <span class="unmapped-count">Unmapped: <strong id="unmappedCount">0</strong></span>
+            </div>
+            
+            <!-- Mapping List Container -->
+            <div class="mapping-list" id="mappingList">
+                <!-- Dynamically populated with source → workbook dropdowns -->
+                <p class="placeholder">Load searches to see sources</p>
+            </div>
+            
+            <!-- Mapping Actions -->
+            <div class="mapping-actions">
+                <button id="saveMappingBtn" class="btn btn-primary btn-small">
+                    💾 Save Mapping
+                </button>
+                <button id="clearMappingBtn" class="btn btn-secondary btn-small">
+                    🗑️ Clear All
+                </button>
+                <button id="autoMapBtn" class="btn btn-secondary btn-small" title="Auto-match sources to workbooks with same name">
+                    🔮 Auto-Map
+                </button>
+            </div>
+        </section>
+
+        <!-- Auto-Run Section (NEW - Phase 8) -->
+        <section class="section auto-run-section" id="autoRunSection" style="display: none;">
+            <h2>🚀 Auto-Run Batch Queue</h2>
+            
+            <!-- Selection Summary -->
+            <div class="selection-summary" id="selectionSummary">
+                <div class="summary-item">
+                    <span class="label">Selected Searches:</span>
+                    <span class="value" id="selectedSearchCount">0</span>
+                </div>
+                <div class="summary-item">
+                    <span class="label">Sources to Process:</span>
+                    <span class="value" id="selectedSourceCount">0</span>
+                </div>
+            </div>
+            
+            <!-- Auto-Run Controls -->
+            <div class="auto-run-controls">
+                <button id="selectAllSearchesBtn" class="btn btn-secondary btn-small">
+                    ☑️ Select All
+                </button>
+                <button id="deselectAllSearchesBtn" class="btn btn-secondary btn-small">
+                    ☐ Deselect All
+                </button>
+            </div>
+            
+            <button id="autoRunBtn" class="btn btn-primary btn-large" disabled>
+                🚀 Auto-Run Selected
+            </button>
+            
+            <button id="stopAutoRunBtn" class="btn btn-danger btn-large" style="display: none;">
+                ⏹️ Stop Auto-Run
+            </button>
+            
+            <!-- Auto-Run Progress -->
+            <div class="auto-run-progress" id="autoRunProgress" style="display: none;">
+                <div class="progress-header">
+                    <span class="progress-title" id="autoRunTitle">Processing...</span>
+                    <span class="progress-detail" id="autoRunDetail">-</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-fill" id="autoRunProgressFill" style="width: 0%;"></div>
+                </div>
+                <div class="progress-stats">
+                    <div class="stat">
+                        <span class="stat-label">Source:</span>
+                        <span class="stat-value" id="currentSourceName">-</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Search:</span>
+                        <span class="stat-value" id="currentSearchInfo">-</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Profiles Scraped:</span>
+                        <span class="stat-value" id="autoRunProfileCount">0</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Auto-Run Log -->
+            <div class="auto-run-log" id="autoRunLog" style="display: none;">
+                <h4>Activity Log</h4>
+                <div class="log-entries" id="logEntries">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Workbook Manager Section (NEW - Phase 6) -->
+        <section class="section workbook-section">
+            <h2>📚 Workbook Manager</h2>
+            
+            <!-- Saved Workbooks Dropdown -->
+            <div class="workbook-selector">
+                <select id="savedWorkbooksSelect" class="workbook-dropdown">
+                    <option value="">-- Select a Saved Workbook --</option>
+                </select>
+                <button id="addWorkbookBtn" class="btn btn-small btn-secondary" title="Add new workbook">
+                    ➕
+                </button>
+            </div>
+            
+            <!-- Add Workbook Form (hidden by default) -->
+            <div class="add-workbook-form" id="addWorkbookForm" style="display: none;">
+                <input type="text" id="newWorkbookId" placeholder="Google Sheet ID or URL">
+                <input type="text" id="newWorkbookName" placeholder="Friendly name (e.g., Morgan Cirotto)">
+                <div class="form-actions">
+                    <button id="saveNewWorkbookBtn" class="btn btn-primary btn-small">Save</button>
+                    <button id="cancelAddWorkbookBtn" class="btn btn-secondary btn-small">Cancel</button>
+                </div>
+            </div>
+            
+            <!-- Selected Workbook Info -->
+            <div class="selected-workbook-info" id="selectedWorkbookInfo" style="display: none;">
+                <div class="workbook-details">
+                    <a href="#" id="selectedWorkbookName" class="workbook-name link" target="_blank">-</a>
+                    <span class="workbook-id" id="selectedWorkbookId">-</span>
+                </div>
+                <button id="removeWorkbookBtn" class="btn btn-small btn-danger" title="Remove from saved">
+                    🗑️
+                </button>
+            </div>
+            
+            <!-- Active Tab Display -->
+            <div class="active-tab-display" id="activeTabDisplay" style="display: none;">
+                <span class="tab-label">Active Tab:</span>
+                <span class="tab-name" id="activeTabName">-</span>
+                <span class="tab-status" id="activeTabStatus"></span>
+            </div>
+            
+            <!-- Active Sheet Checkbox -->
+            <div class="active-sheet-checkbox" id="workbookActiveCheckbox" style="display: none;">
+                <label>
+                    <input type="checkbox" id="workbookActiveCheck" class="active-sheet-check">
+                    <span>✓ Use this workbook as active sheet</span>
+                </label>
+            </div>
+        </section>
+
+        <!-- Compare Tabs Section (NEW - Phase 7) -->
+        <details class="section compare-section">
+            <summary>🔄 Compare Tabs</summary>
+            <div class="section-content">
+                <p class="section-description" style="font-size: 12px; color: #888; margin-bottom: 12px; font-style: italic;">
+                    Find entries that exist in one tab but not the other.
+                </p>
+                
+                <div class="form-group">
+                    <label for="compareTab1">Baseline Tab (older):</label>
+                    <select id="compareTab1" class="tab-select">
+                        <option value="">-- Select Tab --</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="compareTab2">Compare Tab (newer):</label>
+                    <select id="compareTab2" class="tab-select">
+                        <option value="">-- Select Tab --</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="compareOutputName">Output Tab Name:</label>
+                    <input type="text" id="compareOutputName" placeholder="e.g., new_leads" />
+                </div>
+                
+                <div class="form-group">
+                    <label for="compareKeyColumn">Compare By:</label>
+                    <select id="compareKeyColumn" class="key-select">
+                        <option value="1" selected>Name (Column B)</option>
+                        <option value="5">LinkedIn URL (Column F)</option>
+                    </select>
+                </div>
+                
+                <div class="button-row">
+                    <button id="compareBtn" class="btn btn-primary" disabled>
+                        🔄 Compare
+                    </button>
+                    <button id="refreshTabsBtn" class="btn btn-secondary">
+                        ↻ Refresh Tabs
+                    </button>
+                </div>
+                
+                <div id="compareResults" class="results-box" style="display: none;">
+                    <div class="result-item">
+                        <span class="result-label">Tab 1 Rows:</span>
+                        <span id="compareTab1Count">-</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Tab 2 Rows:</span>
+                        <span id="compareTab2Count">-</span>
+                    </div>
+                    <div class="result-item result-highlight">
+                        <span class="result-label">New Entries:</span>
+                        <span id="compareNewCount">-</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Output Tab:</span>
+                        <span id="compareOutputTab">-</span>
+                    </div>
+                </div>
+                
+                <div id="compareError" class="error-message" style="display: none;"></div>
+            </div>
+        </details>
+
+        <!-- Output Sheet Section -->
+        <section class="section">
+            <h2>📤 Output Sheet</h2>
+            <div class="input-row">
+                <input type="text" id="newSheetName" placeholder="New sheet name...">
+                <button id="createSheetBtn" class="btn btn-secondary">Create</button>
+            </div>
+            <div class="input-row" style="margin-top: 8px;">
+                <input type="text" id="loadSheetId" placeholder="Sheet URL or ID...">
+                <button id="loadSheetBtn" class="btn btn-secondary">Load</button>
+            </div>
+            <div class="input-row" style="margin-top: 8px;">
+                <input type="text" id="newTabName" placeholder="New tab name...">
+                <button id="addTabBtn" class="btn btn-secondary">Add Tab</button>
+            </div>
+            <div class="current-output" id="currentOutput">
+                <span class="label">Active:</span>
+                <a href="#" id="outputSheetDisplay" class="value link" target="_blank" style="display: none;">None</a>
+                <span id="outputSheetDisplayText" class="value" style="display: inline;">None</span>
+            </div>
+            <div class="current-output" id="currentTabOutput" style="margin-top: 4px;">
+                <span class="label">Tab:</span>
+                <select id="tabSelector" class="tab-selector" style="display: none;">
+                    <option value="">Loading tabs...</option>
+                </select>
+                <span id="currentTabDisplay" class="value">Sheet1</span>
+            </div>
+            <!-- Active Sheet Checkbox -->
+            <div class="active-sheet-checkbox" id="outputActiveCheckbox" style="display: none;">
+                <label>
+                    <input type="checkbox" id="outputActiveCheck" class="active-sheet-check">
+                    <span>✓ Use this sheet as active sheet</span>
+                </label>
+            </div>
+        </section>
+
+        <!-- Queue Status Section (NEW) -->
+        <section class="section queue-section" id="queueSection">
+            <h2>📊 Sync Queue</h2>
+            <div class="queue-stats">
+                <div class="queue-stat pending">
+                    <span class="queue-number" id="pendingRows">0</span>
+                    <span class="queue-label">Pending</span>
+                </div>
+                <div class="queue-stat synced">
+                    <span class="queue-number" id="syncedRows">0</span>
+                    <span class="queue-label">Synced</span>
+                </div>
+                <div class="queue-stat failed" id="failedStat" style="display: none;">
+                    <span class="queue-number" id="failedRows">0</span>
+                    <span class="queue-label">Failed</span>
+                </div>
+            </div>
+            <div class="queue-actions" id="queueActions" style="display: none;">
+                <button id="retryFailedBtn" class="btn btn-small btn-warning">🔄 Retry</button>
+                <button id="downloadFailedBtn" class="btn btn-small btn-secondary">📥 Export CSV</button>
+            </div>
+        </section>
+
+        <!-- Selector Health Section (NEW - Phase 8) -->
+        <section class="section selector-health-section" id="selectorHealthSection">
+            <h2>🔍 Selector Health</h2>
+            
+            <div class="selector-health-status" id="selectorHealthStatus">
+                <div class="health-indicator" id="healthIndicator">
+                    <span class="health-dot"></span>
+                    <span class="health-text" id="healthText">Checking...</span>
+                </div>
+                <button id="testSelectorsBtn" class="btn btn-small btn-secondary">
+                    🧪 Test Selectors
+                </button>
+            </div>
+            
+            <div class="selector-health-details" id="selectorHealthDetails" style="display: none;">
+                <div class="health-summary" id="healthSummary">
+                    <p class="health-summary-text">Loading health data...</p>
+                </div>
+                
+                <details class="health-details-collapsible">
+                    <summary>View Details</summary>
+                    <div class="health-details-content" id="healthDetailsContent">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </details>
+            </div>
+            
+            <details class="advanced-selector-controls" style="margin-top: 10px;">
+                <summary style="font-size: 11px; color: #888; cursor: pointer;">Advanced: Update Selectors</summary>
+                <div class="advanced-controls-content" style="margin-top: 8px; padding: 8px; background: #1a1a1a; border-radius: 4px;">
+                    <p style="font-size: 11px; color: #888; margin-bottom: 8px;">
+                        Update selectors manually (JSON format). Use with caution.
+                    </p>
+                    <textarea id="selectorConfigTextarea" 
+                              placeholder='{"profileCard": ["selector1", "selector2"], ...}'
+                              style="width: 100%; min-height: 100px; font-family: monospace; font-size: 11px; padding: 6px; background: #2a2a2a; color: #f0f0f0; border: 1px solid #555; border-radius: 4px; resize: vertical;"></textarea>
+                    <div style="display: flex; gap: 6px; margin-top: 8px;">
+                        <button id="updateSelectorsBtn" class="btn btn-small btn-warning">Update</button>
+                        <button id="resetSelectorsBtn" class="btn btn-small btn-secondary">Reset to Defaults</button>
+                    </div>
+                </div>
+            </details>
+        </section>
+
+        <!-- Actions -->
+        <section class="section actions">
+            <button id="startScrapingBtn" class="btn btn-primary btn-large" disabled>
+                🚀 Start Scraping
+            </button>
+            <button id="stopScrapingBtn" class="btn btn-danger" disabled>
+                🛑 Stop
+            </button>
+        </section>
+
+        <!-- Smart Navigation Panel (NEW) - Hidden by default -->
+        <section class="section next-search-panel" id="nextSearchPanel" style="display: none;">
+            <div class="completion-header">
+                <span class="completion-icon">✅</span>
+                <h2>Search Complete!</h2>
+            </div>
+            <div class="completion-summary" id="completionSummary">
+                <p>Scraped <strong id="completedProfiles">0</strong> profiles from <strong id="completedPages">0</strong> pages</p>
+            </div>
+            <div class="next-search-info" id="nextSearchInfo">
+                <div class="next-search-label">Next Search:</div>
+                <div class="next-search-details">
+                    <span class="next-source" id="nextSearchSource">-</span>
+                    <span class="next-title" id="nextSearchTitle">-</span>
+                </div>
+            </div>
+            <div class="next-search-actions">
+                <button id="proceedNextBtn" class="btn btn-primary btn-large">
+                    ▶️ Proceed to Next Search
+                </button>
+                <button id="dismissNextBtn" class="btn btn-secondary">
+                    Dismiss
+                </button>
+            </div>
+            <div class="all-complete-message" id="allCompleteMessage" style="display: none;">
+                <p>🎉 <strong>All searches complete!</strong></p>
+                <p class="sub-message">You've finished all configured searches.</p>
+            </div>
+        </section>
+
+        <!-- Status -->
+        <section class="status-section">
+            <div class="status-text" id="statusText">Ready</div>
+            <div class="progress-bar" id="progressBar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <a href="#" id="openOutputSheet" class="link" style="display: none;">
+                📊 Open Sheet
+            </a>
+            <a href="#" id="forceSync" class="link" title="Force sync pending rows">
+                🔄 Sync Now
+            </a>
+            <a href="#" id="deduplicateBtn" class="link" title="Remove duplicate rows based on Name column">
+                🧹 Deduplicate
+            </a>
+            <span class="version">v1.0.0 Diamond</span>
+        </footer>
+    </div>
+
+    <script src="sidebar.js"></script>
+</body>
+</html>
+

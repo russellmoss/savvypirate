@@ -1,18 +1,22 @@
 // ==========================================
-// PHASE 20: "THE FUZZY MASTER" (Smart Token + URL Matching)
+// PHASE 20: "THE FUZZY MASTER" (Targeting Column Q)
 // ==========================================
 //
-// USAGE: This script is used for INDIVIDUAL workbooks (e.g., Morgan Cirotto, Taylor Etoch, etc.)
+// USAGE: This script is used for the "Morgan and Taylor update" COMPARISON workbook
 // - Input columns: Name (B), Location (D), LinkedIn URL (F)
-// - Output starts at: Column P (16)
+// - Output starts at: Column Q (17)
 // - Matching Priority:
 //   1. Slug Match (robust against https/http, trailing slashes, query params)
 //   2. Exact Name Match (UPPER comparison)
+// - CRM Fields:
+//   - Status: From Lead.Status
+//   - Disposition: From Lead.Disposition__c or Opportunity.Closed_Lost_Reason__c
+//   - Closed Lost Details: From Opportunity.Closed_Lost_Details__c
 //
-// NOTE: For the "Morgan and Taylor update" comparison workbook, use enricher_comparison.gs instead
+// NOTE: For individual workbooks (Morgan, Taylor, etc.), use enricher.gs instead
 // ==========================================
 
-const BQ_PROJECT_ID = 'savvy-gtm-analytics'; 
+const BQ_PROJECT_ID = 'savvy-gtm-analytics';
 
 // 1. DATA SOURCES
 const DISCOVERY_TABLES = [
@@ -30,7 +34,8 @@ const ENRICHMENT_HEADERS = [
   'CRM Type',             // Lead or Opportunity
   'CRM ID',               // The specific ID
   'Status',               // Status from Lead table
-  'CRM Sentiment',        // Disposition or Closed Reason
+  'Disposition',         // Disposition (Lead) or Closed_Lost_Reason__c (Opportunity)
+  'Closed Lost Details', // Closed_Lost_Details__c from Opportunity table
   'Last Activity',        // Date of last action
   'Salesforce Link',      // Clickable Link
   'CRD Number',
@@ -59,10 +64,11 @@ function runBigQueryEnrichment() {
   const sheet = ss.getActiveSheet();
   
   // --- CONFIGURATION ---
-  const NAME_COL_INDEX = 1;      // Column B
-  const LOCATION_COL_INDEX = 3;  // Column D
-  const LINKEDIN_COL_INDEX = 5;  // Column F
-  const OUTPUT_START_COL = 16;   // Column P
+  // CSV Structure: Date, Name, Title, Location, Connection Source, LinkedIn URL, Accreditations...
+  const NAME_COL_INDEX = 1;      // Column B (Name)
+  const LOCATION_COL_INDEX = 3;  // Column D (Location)
+  const LINKEDIN_COL_INDEX = 5;  // Column F (LinkedIn URL)
+  const OUTPUT_START_COL = 17;   // Column Q (output starts here)
   // ---------------------
 
   // Write Headers
@@ -90,9 +96,12 @@ function runBigQueryEnrichment() {
 
   let validRows = [];
   values.forEach((row, i) => {
-    const name = clean(row[NAME_COL_INDEX] || "");
-    let url = clean(row[LINKEDIN_COL_INDEX] || "");
-    const location = clean(row[LOCATION_COL_INDEX] || "");
+    // Safety check to ensure row has enough columns
+    const safeGet = (idx) => (row.length > idx ? row[idx] : "");
+    
+    const name = clean(safeGet(NAME_COL_INDEX));
+    let url = clean(safeGet(LINKEDIN_COL_INDEX));
+    const location = clean(safeGet(LOCATION_COL_INDEX));
     
     // Remove query params from URL
     if (url.includes('?')) url = url.split('?')[0]; 
@@ -108,7 +117,7 @@ function runBigQueryEnrichment() {
   });
 
   if (validRows.length === 0) {
-    ss.toast("No valid rows found.");
+    ss.toast("No valid rows found. Check column indexes.");
     return;
   }
 
@@ -231,7 +240,8 @@ function runBigQueryEnrichment() {
       END as CRM_Type,
       COALESCE(opp.Full_Opportunity_ID__c, lead.Full_Prospect_ID__c) as CRM_ID,
       COALESCE(CAST(lead.Status AS STRING), '') as Status,
-      COALESCE(opp.Closed_Lost_Reason__c, lead.Disposition__c) as CRM_Sentiment,
+      COALESCE(opp.Closed_Lost_Reason__c, lead.Disposition__c) as Disposition,
+      COALESCE(opp.Closed_Lost_Details__c, '') as Closed_Lost_Details,
       COALESCE(CAST(opp.LastActivityDate AS STRING), CAST(lead.LastActivityDate AS STRING)) as Last_Activity,
       CASE 
         WHEN opp.Id IS NOT NULL THEN CONCAT('https://savvywealth.lightning.force.com/lightning/r/Opportunity/', opp.Full_Opportunity_ID__c, '/view')
@@ -324,8 +334,6 @@ function doPost(e) {
     const params = JSON.parse(e.postData.contents);
     const { action, tabName } = params;
     
-    Logger.log(`[WebApp] Received action: ${action}, tabName: ${tabName}`);
-    
     if (!action || !tabName) {
       return ContentService.createTextOutput(JSON.stringify({
         success: false,
@@ -348,7 +356,6 @@ function doPost(e) {
       try {
         sheet.activate();
         SpreadsheetApp.flush();
-        Logger.log(`[WebApp] Starting BigQuery enrichment on tab: ${tabName}`);
         runBigQueryEnrichment();
         SpreadsheetApp.flush();
         originalSheet.activate();
@@ -358,11 +365,7 @@ function doPost(e) {
         
         return ContentService.createTextOutput(JSON.stringify({
           success: true,
-          message: `Enriched ${tabName} with BigQuery data (${dataRowCount} rows processed)`,
-          details: {
-            tabName: tabName,
-            rowsProcessed: dataRowCount
-          }
+          message: `Enriched ${tabName} with BigQuery data (${dataRowCount} rows processed)`
         })).setMimeType(ContentService.MimeType.JSON);
       } catch (enrichError) {
         try {
@@ -391,3 +394,4 @@ function doPost(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   }
 }
+
