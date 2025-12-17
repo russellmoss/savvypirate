@@ -48,6 +48,36 @@ body {
     transition: background 0.3s;
 }
 
+/* Selector Health Indicator Styles */
+.health-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    background: #f0f0f0;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+    margin-left: 10px;
+}
+
+.health-indicator:hover {
+    background: #e0e0e0;
+}
+
+.health-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ccc;
+    transition: background-color 0.3s ease;
+}
+
+.health-dot.green { background: #22c55e; }
+.health-dot.yellow { background: #eab308; }
+.health-dot.red { background: #ef4444; }
+
 .status-indicator.connected .dot {
     background: #28a745;
     animation: pulse 2s infinite;

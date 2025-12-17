@@ -684,6 +684,274 @@ async function advanceToNextSearch() {
     }
 }
 
+// ============================================================
+// PHASE 8 ENHANCED: Dynamic Selector Optimization
+// ============================================================
+
+/**
+ * Get selectors optimized by success rate
+ * Reorders selectors so most successful ones are tried first
+ * 
+ * @param {string} selectorKey - The selector key (e.g., 'title', 'location')
+ * @returns {Promise<Array>} - Optimized selector array
+ */
+async function getOptimizedSelectors(selectorKey) {
+    try {
+        // Get current stats and config
+        const stats = await loadSelectorStats();
+        const configData = await loadSelectorConfig();
+        const config = configData.selectors || DEFAULT_SELECTORS;
+        
+        // Stats are stored with format: "selectorKey:selector" as the stat key
+        // Need to extract stats for this selectorKey
+        const keyStats = {};
+        const prefix = selectorKey + ':';
+        for (const [statKey, statValue] of Object.entries(stats)) {
+            if (statKey.startsWith(prefix)) {
+                const selector = statKey.substring(prefix.length);
+                keyStats[selector] = statValue;
+            }
+        }
+        
+        const defaultSelectors = config[selectorKey] || DEFAULT_SELECTORS[selectorKey] || [];
+        
+        // If no stats yet, return default order
+        if (Object.keys(keyStats).length === 0) {
+            console.log(`[SELECTOR-OPT] No stats for "${selectorKey}", using default order`);
+            return defaultSelectors;
+        }
+
+        // Calculate success rate for each selector
+        const selectorScores = defaultSelectors.map(selector => {
+            const selectorStat = keyStats[selector];
+            if (!selectorStat) {
+                return {
+                    selector,
+                    successRate: 0.5,
+                    attempts: 0,
+                    confidence: 'low'
+                };
+            }
+            
+            // Handle both old format (successes/failures) and new format (attempts/successes)
+            const successes = selectorStat.successes || 0;
+            const failures = selectorStat.failures || 0;
+            const attempts = successes + failures;
+            
+            // Require minimum attempts before considering success rate
+            const MIN_ATTEMPTS = 10;
+            if (attempts < MIN_ATTEMPTS) {
+                // Use default position (index-based score)
+                return {
+                    selector,
+                    successRate: 0.5, // Neutral
+                    attempts,
+                    confidence: 'low'
+                };
+            }
+
+            const successRate = successes / attempts;
+            return {
+                selector,
+                successRate,
+                attempts,
+                confidence: 'high'
+            };
+        });
+
+        // Sort by success rate (highest first), then by attempts (more = better signal)
+        selectorScores.sort((a, b) => {
+            // High confidence selectors first
+            if (a.confidence !== b.confidence) {
+                return a.confidence === 'high' ? -1 : 1;
+            }
+            // Then by success rate
+            if (Math.abs(a.successRate - b.successRate) > 0.1) {
+                return b.successRate - a.successRate;
+            }
+            // Then by attempts (more data = more reliable)
+            return b.attempts - a.attempts;
+        });
+
+        const optimizedSelectors = selectorScores.map(s => s.selector);
+        
+        console.log(`[SELECTOR-OPT] Optimized "${selectorKey}":`, 
+            selectorScores.slice(0, 3).map(s => 
+                `${s.selector.substring(0, 30)}... (${(s.successRate * 100).toFixed(0)}%)`
+            )
+        );
+
+        return optimizedSelectors;
+    } catch (error) {
+        console.error('[SELECTOR-OPT] Error optimizing selectors:', error);
+        return DEFAULT_SELECTORS[selectorKey] || [];
+    }
+}
+
+/**
+ * Get all optimized selectors as a complete config object
+ * @returns {Promise<Object>} - Full selector config with optimized order
+ */
+async function getFullOptimizedConfig() {
+    const optimizedConfig = {};
+    const keys = Object.keys(DEFAULT_SELECTORS);
+    
+    for (const key of keys) {
+        optimizedConfig[key] = await getOptimizedSelectors(key);
+    }
+    
+    return optimizedConfig;
+}
+
+// ============================================================
+// PHASE 8 ENHANCED: Selector Health Reporting
+// ============================================================
+
+/**
+ * Generate comprehensive selector health report
+ * @returns {Promise<Object>} - Health report with metrics and recommendations
+ */
+async function getSelectorHealthReport() {
+    try {
+        const stats = await loadSelectorStats();
+        const configData = await loadSelectorConfig();
+        const config = configData.selectors || DEFAULT_SELECTORS;
+        
+        const report = {
+            timestamp: new Date().toISOString(),
+            overallHealth: 0,
+            selectorTypes: {},
+            problematicSelectors: [],
+            recommendations: []
+        };
+
+        let totalScore = 0;
+        let typeCount = 0;
+
+        // Analyze each selector type
+        for (const [key, selectors] of Object.entries(config)) {
+            // Extract stats for this selector key
+            const keyStats = {};
+            const prefix = key + ':';
+            for (const [statKey, statValue] of Object.entries(stats)) {
+                if (statKey.startsWith(prefix)) {
+                    const selector = statKey.substring(prefix.length);
+                    keyStats[selector] = statValue;
+                }
+            }
+            
+            let workingCount = 0;
+            let totalAttempts = 0;
+            let totalSuccesses = 0;
+
+            const selectorDetails = selectors.map((selector, index) => {
+                const selectorStat = keyStats[selector];
+                const attempts = selectorStat ? (selectorStat.successes || 0) + (selectorStat.failures || 0) : 0;
+                const successes = selectorStat ? (selectorStat.successes || 0) : 0;
+                const successRate = attempts > 0 ? successes / attempts : null;
+                
+                totalAttempts += attempts;
+                totalSuccesses += successes;
+
+                if (successRate !== null && successRate > 0.5) {
+                    workingCount++;
+                }
+
+                // Flag problematic selectors
+                if (attempts > 10 && successRate !== null && successRate < 0.2) {
+                    report.problematicSelectors.push({
+                        type: key,
+                        selector: selector.substring(0, 50),
+                        successRate: (successRate * 100).toFixed(1) + '%',
+                        attempts
+                    });
+                }
+
+                return {
+                    index,
+                    selector: selector.substring(0, 60) + (selector.length > 60 ? '...' : ''),
+                    attempts,
+                    successRate: successRate !== null ? (successRate * 100).toFixed(1) + '%' : 'N/A'
+                };
+            });
+
+            const typeHealth = totalAttempts > 0 
+                ? Math.round((totalSuccesses / totalAttempts) * 100) 
+                : 100; // No attempts = assume healthy
+
+            report.selectorTypes[key] = {
+                health: typeHealth,
+                totalSelectors: selectors.length,
+                workingSelectors: workingCount,
+                totalAttempts,
+                totalSuccesses,
+                details: selectorDetails
+            };
+
+            totalScore += typeHealth;
+            typeCount++;
+        }
+
+        // Calculate overall health
+        report.overallHealth = typeCount > 0 ? Math.round(totalScore / typeCount) : 100;
+
+        // Generate recommendations
+        if (report.overallHealth < 50) {
+            report.recommendations.push('⚠️ CRITICAL: Overall selector health is low. LinkedIn may have changed their structure significantly.');
+            report.critical = true;
+        }
+        
+        if (report.problematicSelectors.length > 0) {
+            report.recommendations.push(`🔧 ${report.problematicSelectors.length} selector(s) have low success rates and may need updating.`);
+        }
+
+        for (const [key, typeData] of Object.entries(report.selectorTypes)) {
+            if (typeData.health < 30 && typeData.totalAttempts > 20) {
+                report.recommendations.push(`🚨 "${key}" selectors are failing frequently (${typeData.health}% success). Consider adding new selectors.`);
+                report.critical = true;
+            }
+        }
+
+        if (report.recommendations.length === 0) {
+            report.recommendations.push('✅ All selectors are healthy!');
+        }
+
+        // ENHANCED: Trigger alert if critical
+        if (report.critical && report.overallHealth < 50) {
+            // Store last alert time to avoid spam
+            const alertData = await getFromStorage(['lastCriticalAlert']);
+            const lastAlert = alertData.lastCriticalAlert || 0;
+            const timeSinceLastAlert = Date.now() - lastAlert;
+            const ALERT_COOLDOWN = 3600000; // 1 hour
+            
+            if (timeSinceLastAlert > ALERT_COOLDOWN) {
+                // Send browser notification (requires "notifications" permission in manifest.json)
+                try {
+                    chrome.notifications.create({
+                        type: 'basic',
+                        iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+                        title: 'LinkedIn Scraper: Critical Selector Health',
+                        message: `Selector health dropped to ${report.overallHealth}%. Some fields may not be extracted correctly.`,
+                        priority: 2
+                    });
+                    
+                    await saveToStorage({ lastCriticalAlert: Date.now() });
+                } catch (notifError) {
+                    console.warn('[SELECTOR-HEALTH] Notification failed (may need permissions):', notifError);
+                }
+            }
+        }
+
+        return report;
+    } catch (error) {
+        console.error('[SELECTOR-HEALTH] Error generating report:', error);
+        return {
+            error: error.message,
+            timestamp: new Date().toISOString()
+        };
+    }
+}
+
 // --- MESSAGE HANDLER ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const { action } = message;
@@ -1456,6 +1724,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         response = { success: true };
                     }
                     break;
+                }
+
+                case 'GET_OPTIMIZED_SELECTORS': {
+                    const { selectorKey } = message;
+                    if (selectorKey) {
+                        getOptimizedSelectors(selectorKey).then(selectors => {
+                            sendResponse({ success: true, selectors });
+                        }).catch(error => {
+                            sendResponse({ success: false, error: error.message });
+                        });
+                    } else {
+                        getFullOptimizedConfig().then(config => {
+                            sendResponse({ success: true, config });
+                        }).catch(error => {
+                            sendResponse({ success: false, error: error.message });
+                        });
+                    }
+                    return true; // Keep channel open for async
+                }
+
+                case 'GET_SELECTOR_HEALTH_REPORT': {
+                    getSelectorHealthReport().then(report => {
+                        sendResponse({ success: true, report });
+                    }).catch(error => {
+                        sendResponse({ success: false, error: error.message });
+                    });
+                    return true; // Keep channel open for async
                 }
 
                 case 'LOG_SELECTOR_FAILURE': {

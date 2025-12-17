@@ -4,7 +4,7 @@
  * Selector Configuration Version
  * Increment this when selector structure changes or new selectors added
  */
-export const SELECTOR_VERSION = '1.0.0';
+export const SELECTOR_VERSION = '1.1.0';
 
 /**
  * Default LinkedIn DOM Selectors with Fallback Chains
@@ -50,40 +50,76 @@ export const DEFAULT_SELECTORS = {
     /**
      * Profile Title (Job Title)
      * Multiple strategies to find the job title text
+     * 
+     * NEW v1.1.0: Added relative positional selectors at top
      */
     title: [
-        // Strategy 1: New LinkedIn structure - div with acd09c55 class (title container)
+        // === NEW: December 2024 LinkedIn DOM Structure ===
+        // Strategy 1: Title is in div.d395caa1 without the .a7293f27 class (location has this)
+        'div[data-view-name="people-search-result"] div.d395caa1:not(.a7293f27) > p',
+        // Strategy 2: First div.d395caa1 > p after name (location is second)
+        'div[data-view-name="people-search-result"] div.d395caa1:first-of-type > p',
+        
+        // === NEW: Relative Positional Selectors (v1.1.0) ===
+        // Strategy 3: Sibling div after name paragraph
+        'p:has(a[href*="/in/"]) ~ div:first-of-type > p',
+        // Strategy 4: Adjacent sibling div after name
+        'p:has(a[href*="/in/"]) + div > p',
+        // Strategy 5: First p sibling after name link
+        'a[href*="/in/"]:not([href*="?"]) ~ p:first-of-type',
+        // Strategy 6: First div sibling's p after name container
+        'div:has(> p > a[href*="/in/"]) ~ div:nth-of-type(1) > p',
+        
+        // === EXISTING: Class-based selectors (may be outdated) ===
+        // Strategy 7: Old LinkedIn structure - div with acd09c55 class (title container)
         'div.acd09c55 > p',
-        // Strategy 2: More specific - full class chain for title
+        // Strategy 8: More specific - full class chain for title (old)
         'div._3c8635b4.b537fe1d.a90e6a91.b351b4d3.febc4ac2.acd09c55.f54c229b > p',
-        // Strategy 3: Entity result subtitle (most common legacy)
+        // Strategy 9: Entity result subtitle (legacy)
         '.entity-result__primary-subtitle',
-        // Strategy 4: Generic subtitle
+        // Strategy 10: Generic subtitle
         '.entity-result__subtitle',
-        // Strategy 5: Search result subtitle
+        // Strategy 11: Search result subtitle
         '.search-result__subtitle',
-        // Strategy 6: Second <p> tag in card (common pattern)
+        // Strategy 12: Second <p> tag in card (common pattern)
         'p:nth-of-type(2)',
-        // Strategy 7: Generic subtitle class
+        // Strategy 13: Generic subtitle class
         '.subline'
     ],
 
     /**
      * Profile Location
      * Multiple strategies to find location text
+     * 
+     * NEW v1.1.0: Added relative positional selectors at top
      */
     location: [
-        // Strategy 1: New LinkedIn structure - div with bb0216de class (location container)
+        // === NEW: December 2024 LinkedIn DOM Structure ===
+        // Strategy 1: Location's parent div has the extra class a7293f27
+        'div[data-view-name="people-search-result"] div.d395caa1.a7293f27 > p',
+        // Strategy 2: Second div.d395caa1 > p (title is first)
+        'div[data-view-name="people-search-result"] div.d395caa1:nth-of-type(2) > p',
+        
+        // === NEW: Relative Positional Selectors (v1.1.0) ===
+        // Strategy 3: Second sibling div after name paragraph
+        'p:has(a[href*="/in/"]) ~ div:nth-of-type(2) > p',
+        // Strategy 4: Second p sibling after name link
+        'a[href*="/in/"]:not([href*="?"]) ~ p:nth-of-type(2)',
+        // Strategy 5: Second div sibling's p after name container
+        'div:has(> p > a[href*="/in/"]) ~ div:nth-of-type(2) > p',
+        
+        // === EXISTING: Class-based selectors (may be outdated) ===
+        // Strategy 6: Old LinkedIn structure - div with bb0216de class (location container)
         'div.bb0216de > p',
-        // Strategy 2: More specific - full class chain for location
+        // Strategy 7: More specific - full class chain for location (old)
         'div._3c8635b4.b537fe1d.a90e6a91.b351b4d3.febc4ac2.bb0216de.f54c229b > p',
-        // Strategy 3: Entity result secondary subtitle (legacy)
+        // Strategy 8: Entity result secondary subtitle (legacy)
         '.entity-result__secondary-subtitle',
-        // Strategy 4: Search result metadata
+        // Strategy 9: Search result metadata
         '.search-result__metadata',
-        // Strategy 5: Third <p> tag in card
+        // Strategy 10: Third <p> tag in card
         'p:nth-of-type(3)',
-        // Strategy 6: Location-specific class
+        // Strategy 11: Location-specific class
         '.search-result__location'
     ],
 
@@ -107,15 +143,17 @@ export const DEFAULT_SELECTORS = {
      * Multiple strategies to find pagination "Next" button
      */
     nextButton: [
-        // Strategy 1: Aria label button (most accessible)
+        // Strategy 1: December 2024 LinkedIn - Working Next button selector
+        'button[data-testid="pagination-controls-next-button-visible"]',
+        // Strategy 2: Aria label button (fallback)
         'button[aria-label="Next"]',
-        // Strategy 2: Text content "Next"
+        // Strategy 3: Text content "Next"
         'button:has-text("Next")',
-        // Strategy 3: Pagination next button class
+        // Strategy 4: Pagination next button class
         '.artdeco-pagination__button--next:not([disabled])',
-        // Strategy 4: Generic next button
+        // Strategy 5: Generic next button
         'button.next-button',
-        // Strategy 5: Link with "Next" text
+        // Strategy 6: Link with "Next" text
         'a:has-text("Next")'
     ],
 

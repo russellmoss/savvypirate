@@ -2843,6 +2843,86 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ============================================================
 
 /**
+ * Load and display selector health in popup
+ */
+async function loadSelectorHealth() {
+    const healthDot = document.getElementById('health-dot');
+    const healthScore = document.getElementById('health-score');
+    const healthIndicator = document.getElementById('selector-health-indicator');
+
+    if (!healthDot || !healthScore) return;
+
+    try {
+        const response = await new Promise((resolve) => {
+            chrome.runtime.sendMessage({ action: 'GET_SELECTOR_HEALTH_REPORT' }, resolve);
+        });
+
+        if (response?.success && response.report) {
+            const health = response.report.overallHealth;
+            healthScore.textContent = health;
+
+            // Set color based on health
+            healthDot.className = 'health-dot';
+            if (health >= 70) {
+                healthDot.classList.add('green');
+            } else if (health >= 40) {
+                healthDot.classList.add('yellow');
+            } else {
+                healthDot.classList.add('red');
+            }
+
+            // Store report for click handler
+            healthIndicator.dataset.report = JSON.stringify(response.report);
+        } else {
+            healthScore.textContent = '--';
+        }
+    } catch (error) {
+        console.error('[POPUP] Failed to load selector health:', error);
+        healthScore.textContent = '??';
+    }
+}
+
+/**
+ * Show detailed health report
+ */
+function showHealthDetails() {
+    const healthIndicator = document.getElementById('selector-health-indicator');
+    const reportJson = healthIndicator?.dataset.report;
+
+    if (!reportJson) {
+        alert('No health data available. Try running a scrape first.');
+        return;
+    }
+
+    const report = JSON.parse(reportJson);
+    
+    // Format for display
+    let message = `Selector Health Report\n`;
+    message += `═══════════════════════\n`;
+    message += `Overall Health: ${report.overallHealth}%\n\n`;
+    
+    message += `By Type:\n`;
+    for (const [key, data] of Object.entries(report.selectorTypes)) {
+        message += `  ${key}: ${data.health}% (${data.totalSuccesses}/${data.totalAttempts})\n`;
+    }
+    
+    if (report.problematicSelectors.length > 0) {
+        message += `\n⚠️ Problematic Selectors:\n`;
+        for (const s of report.problematicSelectors.slice(0, 5)) {
+            message += `  - ${s.type}: ${s.successRate}\n`;
+        }
+    }
+    
+    message += `\nRecommendations:\n`;
+    for (const rec of report.recommendations) {
+        message += `  ${rec}\n`;
+    }
+
+    alert(message);
+    console.log('[POPUP] Full health report:', report);
+}
+
+/**
  * Check selector health and update UI
  */
 async function checkSelectorHealth() {
@@ -3206,6 +3286,9 @@ async function init() {
         // Phase 8: Initialize selector health check
         await checkSelectorHealth();
         
+        // Phase 8 Enhanced: Load selector health indicator
+        await loadSelectorHealth();
+        
         // Check if scraping is actually active (persists across popup closes)
         const wasScrapingActive = await checkScrapingStatus();
         if (wasScrapingActive) {
@@ -3274,6 +3357,12 @@ async function init() {
     elements.updateSelectorsBtn?.addEventListener('click', handleUpdateSelectors);
     elements.resetSelectorsBtn?.addEventListener('click', handleResetSelectors);
     elements.notificationClose?.addEventListener('click', hideNotification);
+    
+    // Phase 8 Enhanced: Health indicator click handler
+    const healthIndicator = document.getElementById('selector-health-indicator');
+    if (healthIndicator) {
+        healthIndicator.addEventListener('click', showHealthDetails);
+    }
     
     // Active sheet checkbox listeners (mutually exclusive)
     elements.workbookActiveCheck?.addEventListener('change', (e) => {

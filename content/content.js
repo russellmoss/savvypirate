@@ -119,6 +119,279 @@
     }
 
     // ============================================================
+    // PHASE 8 ENHANCED: Structure-Aware Extraction System
+    // Added in v1.1.0 - Extracts data by DOM position, not classes
+    // ============================================================
+
+    /**
+     * Extract title and location using DOM structure analysis
+     * This method is class-name agnostic and uses positional relationships
+     * 
+     * @param {Element} card - The profile card container element
+     * @returns {Object} - { title, location, method } or null if extraction failed
+     */
+    function extractByStructure(card) {
+        try {
+            // Step 1: Find the name link (our anchor point)
+            const nameLink = card.querySelector('a[href*="/in/"]');
+            if (!nameLink) {
+                console.log('[STRUCTURE] No name link found in card');
+                return null;
+            }
+
+            // Step 2: Get all text-containing elements
+            const textElements = findAllTextElementsInCard(card, nameLink);
+            if (textElements.length < 2) {
+                console.log('[STRUCTURE] Not enough text elements found:', textElements.length, 'elements. First few:', textElements.slice(0, 3).map(e => e.text?.substring(0, 30)));
+                return null;
+            }
+
+            // Step 3: Identify title and location by position
+            const result = identifyTitleAndLocation(textElements, nameLink);
+            
+            if (result.title || result.location) {
+                console.log('[STRUCTURE] ✅ Extracted via structure:', {
+                    title: result.title?.substring(0, 50) + '...',
+                    location: result.location
+                });
+                return {
+                    title: result.title || '',
+                    location: result.location || '',
+                    method: 'structure-aware'
+                };
+            }
+
+            return null;
+        } catch (error) {
+            console.warn('[STRUCTURE] Extraction error:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Find all text-containing elements in a card, excluding the name
+     * 
+     * @param {Element} card - The profile card
+     * @param {Element} nameLink - The name link element to exclude
+     * @returns {Array} - Array of {element, text, depth, index} objects
+     */
+    function findAllTextElementsInCard(card, nameLink) {
+        const textElements = [];
+        const nameLinkRect = nameLink.getBoundingClientRect();
+        const nameText = nameLink.innerText.trim().toLowerCase();
+
+        // Get all potential text containers (updated for December 2024 LinkedIn DOM)
+        // LinkedIn's title/location are in p tags inside div.d395caa1 containers
+        const candidates = card.querySelectorAll('p, div > p, div.d395caa1 > p');
+        
+        candidates.forEach((el, index) => {
+            const text = el.innerText?.trim();
+            
+            // Skip if:
+            // - No text or too short
+            // - Contains the name (is the name element)
+            // - Is inside the name link
+            // - Is a button or interactive element
+            if (!text || text.length < 3) return;
+            if (text.toLowerCase() === nameText) return;
+            if (nameLink.contains(el)) return;
+            if (el.closest('button, [role="button"]')) return;
+            
+            // Skip common non-content patterns (updated for current LinkedIn)
+            const skipPatterns = [
+                /^connect$/i,
+                /^message$/i,
+                /^follow$/i,
+                /^see all/i,
+                /^\d+ mutual/i,
+                /and \d+ other mutual connections/i,
+                /^view profile$/i,
+                /^•\s*(1st|2nd|3rd)/i  // Connection degree indicators
+            ];
+            if (skipPatterns.some(p => p.test(text))) return;
+            
+            // Skip paragraphs that contain connection degree indicators (• 1st, • 2nd, etc.)
+            if (/^•\s*(1st|2nd|3rd)/.test(text)) return;
+
+            // Calculate vertical position relative to name
+            const elRect = el.getBoundingClientRect();
+            const verticalOffset = elRect.top - nameLinkRect.top;
+
+            textElements.push({
+                element: el,
+                text: text,
+                verticalOffset: verticalOffset,
+                index: index,
+                tagName: el.tagName.toLowerCase()
+            });
+        });
+
+        // Sort by vertical position (top to bottom)
+        textElements.sort((a, b) => a.verticalOffset - b.verticalOffset);
+
+        // Filter to only elements BELOW the name (positive vertical offset)
+        const belowName = textElements.filter(el => el.verticalOffset > 5);
+        
+        // Return only the first 2 candidates (title and location)
+        // This prevents getting too many irrelevant elements
+        return belowName.slice(0, 2);
+    }
+
+    /**
+     * Identify which text element is title and which is location
+     * ENHANCED: Uses both position and content patterns with improved validation
+     * 
+     * @param {Array} textElements - Sorted array of text elements
+     * @param {Element} nameLink - The name link for reference
+     * @returns {Object} - { title, location }
+     */
+    function identifyTitleAndLocation(textElements, nameLink) {
+        // Filter to only elements BELOW the name
+        const nameRect = nameLink.getBoundingClientRect();
+        const belowName = textElements.filter(el => el.verticalOffset > 5); // 5px threshold
+
+        if (belowName.length === 0) {
+            return { title: '', location: '' };
+        }
+
+        // Simple case: first element is title, second is location
+        let titleCandidate = belowName[0]?.text || '';
+        let locationCandidate = belowName[1]?.text || '';
+
+        // ENHANCED: Multi-factor validation
+        const titleScore = calculateTitleConfidence(titleCandidate, locationCandidate);
+        const locationScore = calculateLocationConfidence(locationCandidate, titleCandidate);
+        
+        // If confidence scores suggest swap, correct it
+        if (locationScore > titleScore && looksLikeLocation(titleCandidate) && looksLikeTitle(locationCandidate)) {
+            console.log('[STRUCTURE] Content patterns suggest swap needed (confidence scores)');
+            [titleCandidate, locationCandidate] = [locationCandidate, titleCandidate];
+        }
+        // Also check original pattern-based validation as backup
+        else if (looksLikeLocation(titleCandidate) && looksLikeTitle(locationCandidate) && !looksLikeLocation(locationCandidate)) {
+            console.log('[STRUCTURE] Content patterns suggest swap needed (pattern match)');
+            [titleCandidate, locationCandidate] = [locationCandidate, titleCandidate];
+        }
+
+        return {
+            title: titleCandidate,
+            location: locationCandidate
+        };
+    }
+
+    /**
+     * Calculate confidence score that text is a title
+     * ENHANCED: Uses multiple factors for better accuracy
+     * @param {string} text - Text to evaluate
+     * @param {string} otherText - The other candidate (location)
+     * @returns {number} - Confidence score (0-1)
+     */
+    function calculateTitleConfidence(text, otherText) {
+        if (!text) return 0;
+        
+        let score = 0;
+        
+        // Strong indicators
+        if (/\bat\s+[A-Z]/.test(text)) score += 0.4;  // "at Company"
+        if (/\s*\|\s*/.test(text)) score += 0.3;      // "Title | Company"
+        if (looksLikeTitle(text)) score += 0.3;
+        
+        // Negative indicators
+        if (looksLikeLocation(text)) score -= 0.2;
+        if (text.length < 10) score -= 0.1;  // Too short for most titles
+        
+        return Math.max(0, Math.min(1, score));
+    }
+
+    /**
+     * Calculate confidence score that text is a location
+     * ENHANCED: Uses multiple factors for better accuracy
+     * @param {string} text - Text to evaluate
+     * @param {string} otherText - The other candidate (title)
+     * @returns {number} - Confidence score (0-1)
+     */
+    function calculateLocationConfidence(text, otherText) {
+        if (!text) return 0;
+        
+        let score = 0;
+        
+        // Strong indicators
+        if (/^[A-Z][a-z]+,\s*[A-Z]{2}$/.test(text)) score += 0.5;  // "City, ST"
+        if (/\b(?:Area|Metropolitan|County)\s*$/i.test(text)) score += 0.4;
+        if (looksLikeLocation(text)) score += 0.3;
+        
+        // Negative indicators
+        if (looksLikeTitle(text)) score -= 0.2;
+        if (/\bat\b/.test(text)) score -= 0.3;  // "at" suggests title
+        
+        return Math.max(0, Math.min(1, score));
+    }
+
+    /**
+     * Check if text looks like a location
+     * ENHANCED: Improved patterns to reduce false positives with job titles
+     * @param {string} text - Text to check
+     * @returns {boolean}
+     */
+    function looksLikeLocation(text) {
+        if (!text) return false;
+        
+        // Exclude common job title patterns that might match location patterns
+        if (/\b(?:Area Manager|Regional Director|Territory Sales)\b/i.test(text)) {
+            return false; // These are job titles, not locations
+        }
+        
+        const locationPatterns = [
+            // Geographic suffixes (strong indicators)
+            /\b(?:Area|Metropolitan|County|Region|Province|State)\s*$/i,
+            // City, State format (strong indicator)
+            /^[A-Z][a-z]+,\s*[A-Z]{2}$/,           // "Portland, OR"
+            /^[A-Z][a-z]+,\s*[A-Z][a-z]+\s*$/,     // "London, England"
+            // Country names (strong indicator)
+            /\b(?:United States|USA|Canada|UK|Australia|Germany|France|India|Mexico|Brazil)\b/i,
+            // Regional descriptors
+            /Greater\s+[A-Z][a-z]+\s*(?:Area|Metro|Region)?/i,  // "Greater Seattle Area"
+            /\b(?:Bay|Metro|Tri-State|Northeast|Southeast|Midwest|West Coast)\s+Area/i,
+            // Standalone location keywords
+            /^(?:Remote|Hybrid|On-site)$/i
+        ];
+        
+        return locationPatterns.some(p => p.test(text));
+    }
+
+    /**
+     * Check if text looks like a job title
+     * ENHANCED: Improved patterns to better distinguish from locations
+     * @param {string} text - Text to check
+     * @returns {boolean}
+     */
+    function looksLikeTitle(text) {
+        if (!text) return false;
+        
+        const titlePatterns = [
+            // Company indicator (strong title indicator)
+            /\bat\s+[A-Z]/i,                        // "Engineer at Google"
+            // Separator patterns
+            /\s*\|\s*/,                             // "Title | Company"
+            // Job title keywords (enhanced list)
+            /\b(?:CEO|CFO|CTO|COO|VP|SVP|EVP|EVP|Director|Manager|Lead|Head|Chief|President|Founder|Partner|Principal|Owner|Senior|Junior|Associate|Analyst|Engineer|Developer|Designer|Consultant|Advisor|Specialist|Coordinator|Administrator|Executive|Officer|Representative|Sales|Marketing|Product|Operations|Finance|HR|Recruiter|Accountant|Attorney|Lawyer|Paralegal|Therapist|Counselor|Teacher|Professor|Instructor|Doctor|Nurse|Physician|Surgeon|Dentist|Pharmacist|Veterinarian|Architect|Designer|Artist|Writer|Editor|Journalist|Producer|Director|Photographer|Videographer|Chef|Bartender|Waiter|Server|Cashier|Receptionist|Secretary|Assistant|Intern|Volunteer|Intern|Trainee|Apprentice|Apprentice)\b/i,
+            // Company suffix pattern
+            /-\s*[A-Z]/i,                           // "Engineer - Google"
+            /,\s*(?:Inc|LLC|Ltd|Corp|Co\.|Company|Group|Solutions|Services|Systems|Technologies|Tech|Consulting|Partners|Associates)\b/i,
+            // Industry-specific patterns (financial services)
+            /\b(?:Financial|Investment|Wealth|Portfolio|Asset|Fund|Equity|Trading|Advisory|Planning)\s+(?:Advisor|Manager|Analyst|Consultant|Associate|Specialist|Planner)/i,
+            // Academic/professional credentials in context
+            /\b(?:CFA|CFP|CPA|MBA|PhD|MD|JD|LLM|CMA|CIA|CISA|PMP|PMI|CISSP|AWS|Azure|GCP)\s*(?:\®|®)?\s*[A-Z]?/i
+        ];
+        
+        return titlePatterns.some(p => p.test(text));
+    }
+
+    // ============================================================
+    // END: Structure-Aware Extraction System
+    // ============================================================
+
+    // ============================================================
     // PHASE 8: SELECTOR RESILIENCE SYSTEM
     // ============================================================
 
@@ -130,31 +403,64 @@
     let selectorStats = {};
 
     /**
-     * Initialize selector system
-     * Loads configuration from background script
+     * Send message to background with timeout
+     * @param {Object} message - Message to send
+     * @param {number} timeout - Timeout in ms
+     * @returns {Promise<Object>} - Response or null
+     */
+    function sendMessageWithTimeout(message, timeout = 5000) {
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                resolve(null);
+            }, timeout);
+
+            chrome.runtime.sendMessage(message, (response) => {
+                clearTimeout(timer);
+                if (chrome.runtime.lastError) {
+                    console.warn('[CS] Message error:', chrome.runtime.lastError);
+                    resolve(null);
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+    }
+
+    /**
+     * Initialize selector configuration from background/storage
+     * ENHANCED: Now fetches optimized (success-rate sorted) selectors
+     * 
+     * @returns {Promise<boolean>} - True if initialized successfully
      */
     async function initializeSelectors() {
         try {
-            // Request selector config from background
-            const response = await sendMessageToBackground({
+            // Try to get optimized selectors first (sorted by success rate)
+            const optimizedResponse = await sendMessageWithTimeout({
+                action: 'GET_OPTIMIZED_SELECTORS'
+            }, 3000);
+
+            if (optimizedResponse?.success && optimizedResponse.config) {
+                selectorConfig = optimizedResponse.config;
+                console.log('[SELECTOR] ✅ Loaded OPTIMIZED selector config');
+                return true;
+            }
+
+            // Fall back to regular config
+            const response = await sendMessageWithTimeout({
                 action: 'GET_SELECTOR_CONFIG'
-            });
-            
-            if (response && response.success) {
+            }, 3000);
+
+            if (response?.success && response.config) {
                 selectorConfig = response.config;
                 selectorStats = response.stats || {};
-                console.log('[SELECTOR] ✅ Selector system initialized', {
-                    version: response.version,
-                    keys: Object.keys(selectorConfig)
-                });
+                console.log('[SELECTOR] ✅ Loaded selector config (default order)');
                 return true;
-            } else {
-                console.warn('[SELECTOR] ⚠️ Failed to load selector config, using defaults');
-                // Fallback to hardcoded defaults (backward compatibility)
-                return false;
             }
+
+            console.warn('[SELECTOR] ⚠️ Using hardcoded fallback selectors');
+            return false;
         } catch (error) {
-            console.error('[SELECTOR] ❌ Error initializing:', error);
+            console.error('[SELECTOR] Failed to initialize:', error);
             return false;
         }
     }
@@ -323,24 +629,41 @@
     /**
      * Hardcoded fallback selectors (backward compatibility)
      * Used if selector config fails to load
+     * Updated December 2024 - Based on current LinkedIn DOM structure
      */
     function getHardcodedFallback(selectorKey) {
         const fallbacks = {
-            profileCard: ['div[data-view-name="people-search-result"]'],
-            nameLink: ['a[data-view-name="search-result-lockup-title"]'],
+            profileCard: [
+                'div[data-view-name="people-search-result"]'
+            ],
+            nameLink: [
+                'a[data-view-name="search-result-lockup-title"]'
+            ],
             title: [
-                'div.acd09c55 > p',
-                'div._3c8635b4.b537fe1d.a90e6a91.b351b4d3.febc4ac2.acd09c55.f54c229b > p',
-                'p:nth-of-type(2)'
+                // Strategy 1: Title is in div.d395caa1 without the .a7293f27 class (location has this)
+                'div[data-view-name="people-search-result"] div.d395caa1:not(.a7293f27) > p',
+                // Strategy 2: First div.d395caa1 > p after name (location is second)
+                'div[data-view-name="people-search-result"] div.d395caa1:first-of-type > p'
             ],
             location: [
-                'div.bb0216de > p',
-                'div._3c8635b4.b537fe1d.a90e6a91.b351b4d3.febc4ac2.bb0216de.f54c229b > p',
-                'p:nth-of-type(3)'
+                // Strategy 1: Location's parent div has the extra class a7293f27
+                'div[data-view-name="people-search-result"] div.d395caa1.a7293f27 > p',
+                // Strategy 2: Second div.d395caa1 > p (title is first)
+                'div[data-view-name="people-search-result"] div.d395caa1:nth-of-type(2) > p'
             ],
-            connectionSource: ['a[data-view-name="search-result-social-proof-insight"]'],
-            nextButton: ['button[aria-label="Next"]'],
-            linkedInWarning: ['[data-test-id="security-challenge"]', '.challenge-dialog']
+            connectionSource: [
+                'a[data-view-name="search-result-social-proof-insight"]'
+            ],
+            nextButton: [
+                // WORKING SELECTOR - LinkedIn's current Next button
+                'button[data-testid="pagination-controls-next-button-visible"]',
+                // Keep old ones as fallback
+                'button[aria-label="Next"]'
+            ],
+            linkedInWarning: [
+                '[data-test-id="security-challenge"]',
+                '.challenge-dialog'
+            ]
         };
         return fallbacks[selectorKey] || [];
     }
@@ -719,18 +1042,98 @@
                 // Parse name and extract accreditations
                 const { cleanName, accreditations } = parseNameWithAccreditations(fullName);
 
-                // Title and location with fallbacks
-                const titleElement = querySelectorWithFallbacks(card, 'title', {
-                    context: 'scrapeCurrentPage.title',
-                    logSuccess: false // Reduce noise
-                });
-                const title = titleElement ? titleElement.innerText.trim() : "";
+                // ============================================================
+                // PHASE 8 ENHANCED: Multi-Layer Title/Location Extraction
+                // ============================================================
+                let title = '';
+                let location = '';
+                let extractionMethod = 'none';
 
-                const locationElement = querySelectorWithFallbacks(card, 'location', {
-                    context: 'scrapeCurrentPage.location',
-                    logSuccess: false
-                });
-                const location = locationElement ? locationElement.innerText.trim() : "";
+                // Layer 1: Try structure-aware extraction FIRST
+                console.log('[CS] 🔍 Attempting structure-aware extraction for card');
+                const structureResult = extractByStructure(card);
+                if (structureResult && (structureResult.title || structureResult.location)) {
+                    title = structureResult.title;
+                    location = structureResult.location;
+                    extractionMethod = structureResult.method;
+                    console.log('[CS] ✅ Used structure-aware extraction', { title: title?.substring(0, 30), location: location?.substring(0, 30) });
+                } else {
+                    console.log('[CS] ⚠️ Structure-aware extraction failed or returned empty, trying direct p-tag method');
+                    
+                    // DIRECT P-TAG EXTRACTION FALLBACK (for current LinkedIn DOM)
+                    // Get all p tags in card, filter out name and connection indicators
+                    const allPTags = Array.from(card.querySelectorAll('p'));
+                    
+                    // Filter out name paragraph (contains the name link)
+                    const contentPTags = allPTags.filter(p => !p.querySelector('a[data-view-name="search-result-lockup-title"]'));
+                    
+                    // Filter out connection/mutual paragraphs and other noise
+                    const dataPTags = contentPTags.filter(p => {
+                        const text = p.innerText?.trim() || '';
+                        return !text.includes('mutual connection') && 
+                               !text.includes('other mutual') &&
+                               !text.includes('• 1st') && 
+                               !text.includes('• 2nd') && 
+                               !text.includes('• 3rd') &&
+                               !/^•\s*(1st|2nd|3rd)/i.test(text) &&
+                               text.length > 3 &&
+                               text.length < 200 &&
+                               !text.toLowerCase().includes('connect') &&
+                               !text.toLowerCase().includes('message') &&
+                               !text.toLowerCase().includes('follow');
+                    });
+                    
+                    if (dataPTags.length >= 2) {
+                        title = dataPTags[0]?.innerText?.trim() || '';
+                        location = dataPTags[1]?.innerText?.trim() || '';
+                        extractionMethod = 'direct-p-tag';
+                        console.log('[CS] ✅ Extracted via direct p-tag method:', { title: title.substring(0, 30), location: location.substring(0, 30) });
+                    } else if (dataPTags.length === 1) {
+                        // Only one data field found - likely title
+                        title = dataPTags[0]?.innerText?.trim() || '';
+                        extractionMethod = 'direct-p-tag-partial';
+                        console.log('[CS] ⚠️ Only title found via direct method:', title.substring(0, 30));
+                    }
+                }
+
+                // Layer 2: If structure-aware and direct p-tag failed or incomplete, try fallback selectors
+                if (!title) {
+                    const titleElement = querySelectorWithFallbacks(card, 'title', {
+                        context: 'scrapeCurrentPage.title',
+                        logSuccess: false
+                    });
+                    if (titleElement) {
+                        title = titleElement.innerText.trim();
+                        extractionMethod = extractionMethod === 'none' ? 'selector-fallback' : extractionMethod + '+selector';
+                    }
+                }
+
+                if (!location) {
+                    const locationElement = querySelectorWithFallbacks(card, 'location', {
+                        context: 'scrapeCurrentPage.location',
+                        logSuccess: false
+                    });
+                    if (locationElement) {
+                        location = locationElement.innerText.trim();
+                        extractionMethod = extractionMethod === 'none' ? 'selector-fallback' : extractionMethod + '+selector';
+                    }
+                }
+
+                // Layer 3: Content pattern validation (swap if needed)
+                if (title && location && looksLikeLocation(title) && looksLikeTitle(location)) {
+                    console.log('[CS] ⚠️ Content patterns suggest title/location swap needed');
+                    [title, location] = [location, title];
+                    extractionMethod += '+content-swap';
+                }
+
+                // Log extraction method for debugging (only in verbose mode or failures)
+                if (!title && !location) {
+                    console.warn('[CS] ⚠️ Failed to extract title and location for:', cleanName);
+                }
+
+                // ============================================================
+                // END: Multi-Layer Extraction
+                // ============================================================
 
                 // Connection source comes from input sheet (passed via message.sourceName)
                 const connectionSource = defaultSource || "N/A";
